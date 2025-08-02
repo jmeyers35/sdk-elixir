@@ -21,3 +21,10 @@ temporal-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# Rust build artifacts
+/native/*/target/
+/native/*/Cargo.lock
+
+# NIFs
+/priv/native/
