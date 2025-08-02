@@ -31,11 +31,11 @@ This document breaks down the requirements from SPEC.md into structured, actiona
 - Set up proper directory structure: `lib/`, `native/temporal_nif/`, `priv/`, `test/`
 
 **Acceptance Criteria**:
-- [ ] Mix project created with proper structure
-- [ ] Rustler configured in `mix.exs` with build modes
-- [ ] Dependencies added: rustler, jason, telemetry
-- [ ] Project compiles without errors
-- [ ] Directory structure matches specification
+- [x] Mix project created with proper structure
+- [x] Rustler configured in `mix.exs` with modern approach (no compiler integration)
+- [x] Dependencies added: rustler (~> 0.36, runtime: false), jason, telemetry
+- [x] Project compiles without errors
+- [x] Directory structure matches specification
 
 **Dependencies**: None
 
@@ -88,10 +88,10 @@ This document breaks down the requirements from SPEC.md into structured, actiona
 - Set up panic handling for NIF safety
 
 **Acceptance Criteria**:
-- [ ] NIF module registers successfully with BEAM
-- [ ] Resource types properly registered
-- [ ] Basic function stubs callable from Elixir
-- [ ] No runtime panics or crashes
+- [x] NIF module registers successfully with BEAM
+- [x] Resource types properly registered
+- [x] Basic function stubs callable from Elixir
+- [x] No runtime panics or crashes
 
 **Dependencies**: Task 1.1.2
 
@@ -118,10 +118,10 @@ This document breaks down the requirements from SPEC.md into structured, actiona
 - Add support for Temporal protobuf types
 
 **Acceptance Criteria**:
-- [ ] Basic types convert correctly between Elixir and Rust
-- [ ] Complex nested structures handled properly
-- [ ] Error cases return meaningful error terms
-- [ ] Type conversion is memory-safe
+- [x] Basic types convert correctly between Elixir and Rust
+- [ ] Complex nested structures handled properly (will be implemented as needed)
+- [x] Error cases return meaningful error terms
+- [x] Type conversion is memory-safe
 
 **Dependencies**: Task 1.1.3
 
@@ -146,10 +146,10 @@ This document breaks down the requirements from SPEC.md into structured, actiona
 - Add proper typespecs and documentation
 
 **Acceptance Criteria**:
-- [ ] All NIF functions properly stubbed
-- [ ] Module loads without errors
-- [ ] Proper error handling for unloaded NIFs
-- [ ] Functions properly documented
+- [x] All NIF functions properly stubbed
+- [x] Module loads without errors
+- [x] Proper error handling for unloaded NIFs
+- [x] Functions properly documented
 
 **Dependencies**: Task 1.2.1
 

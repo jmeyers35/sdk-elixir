@@ -22,12 +22,11 @@ defmodule Temporal.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:rustler, "~> 0.36"},
+      {:rustler, "~> 0.36", runtime: false},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.2"},
       {:ex_doc, "~> 0.31", only: :dev}
     ]
   end
-
 
 end
