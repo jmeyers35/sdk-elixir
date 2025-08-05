@@ -33,48 +33,78 @@ defmodule Temporal.TestContainer do
   end
   
   defp start_new_container do
-    IO.puts("🐳 Starting Temporal test container...")
+    IO.puts("🐳 Starting Temporal test containers...")
     
     # Ensure Testcontainers supervision tree is started with retry
     case ensure_testcontainers_started() do
       :ok ->
-        # Configuration for Temporal auto-setup with PostgreSQL
-        config = Testcontainers.Container.new(@temporal_image)
-          |> Testcontainers.Container.with_exposed_ports([@temporal_grpc_port, @temporal_ui_port])
-          |> Testcontainers.Container.with_environment("DB", "postgresql")
-          |> Testcontainers.Container.with_environment("DB_PORT", "5432")
+        # Start PostgreSQL container first
+        postgres_config = Testcontainers.Container.new("postgres:13")
+          |> Testcontainers.Container.with_exposed_ports([5432])
+          |> Testcontainers.Container.with_environment("POSTGRES_DB", "temporal")
           |> Testcontainers.Container.with_environment("POSTGRES_USER", "temporal")
-          |> Testcontainers.Container.with_environment("POSTGRES_PWD", "temporal")
-          |> Testcontainers.Container.with_environment("POSTGRES_SEEDS", "localhost")
+          |> Testcontainers.Container.with_environment("POSTGRES_PASSWORD", "temporal")
         
-        case Testcontainers.start_container(config) do
-          {:ok, container} ->
-            case extract_ports(container) do
-              {:ok, ports} ->
-                case wait_for_temporal_ready(ports.grpc_port) do
-                  :ok ->
-                    IO.puts("✅ Temporal container started!")
-                    IO.puts("   gRPC: localhost:#{ports.grpc_port}")
-                    IO.puts("   UI: http://localhost:#{ports.ui_port}")
-                    # Store container info in Agent
-                    set_container(%{container: container, ports: ports})
-                    {:ok, container, ports}
-                  
+        case Testcontainers.start_container(postgres_config) do
+          {:ok, postgres_container} ->
+            postgres_port = postgres_container.exposed_ports 
+              |> Enum.find(fn {internal, _} -> internal == 5432 end) 
+              |> elem(1)
+            
+            # Wait for PostgreSQL to be ready
+            case wait_for_postgres_ready(postgres_port) do
+              :ok ->
+                # Now start Temporal container
+                temporal_config = Testcontainers.Container.new(@temporal_image)
+                  |> Testcontainers.Container.with_exposed_ports([@temporal_grpc_port, @temporal_ui_port])
+                  |> Testcontainers.Container.with_environment("DB", "postgresql")
+                  |> Testcontainers.Container.with_environment("DB_PORT", "#{postgres_port}")
+                  |> Testcontainers.Container.with_environment("POSTGRES_USER", "temporal")
+                  |> Testcontainers.Container.with_environment("POSTGRES_PWD", "temporal")
+                  |> Testcontainers.Container.with_environment("POSTGRES_SEEDS", "host.docker.internal")
+                
+                case Testcontainers.start_container(temporal_config) do
+                  {:ok, container} ->
+                    case extract_ports(container) do
+                      {:ok, ports} ->
+                        case wait_for_temporal_ready(ports.grpc_port) do
+                          :ok ->
+                            IO.puts("✅ Temporal containers started!")
+                            IO.puts("   gRPC: localhost:#{ports.grpc_port}")
+                            IO.puts("   UI: http://localhost:#{ports.ui_port}")
+                            # Store both containers info in Agent
+                            set_container(%{container: container, postgres_container: postgres_container, ports: ports})
+                            {:ok, container, ports}
+                          
+                          {:error, reason} ->
+                            IO.puts("❌ Temporal container failed health check: #{inspect(reason)}")
+                            # Clean up both containers if health check fails
+                            Testcontainers.stop_container(container.container_id, Testcontainers)
+                            Testcontainers.stop_container(postgres_container.container_id, Testcontainers)
+                            {:error, reason}
+                        end
+                      
+                      {:error, reason} ->
+                        IO.puts("❌ Failed to extract container ports: #{inspect(reason)}")
+                        Testcontainers.stop_container(container.container_id, Testcontainers)
+                        Testcontainers.stop_container(postgres_container.container_id, Testcontainers)
+                        {:error, reason}
+                    end
+                    
                   {:error, reason} ->
-                    IO.puts("❌ Temporal container failed health check: #{inspect(reason)}")
-                    # Clean up container if health check fails
-                    Testcontainers.stop_container(container.container_id, Testcontainers)
+                    IO.puts("❌ Failed to start Temporal container: #{inspect(reason)}")
+                    Testcontainers.stop_container(postgres_container.container_id, Testcontainers)
                     {:error, reason}
                 end
               
               {:error, reason} ->
-                IO.puts("❌ Failed to extract container ports: #{inspect(reason)}")
-                Testcontainers.stop_container(container.container_id, Testcontainers)
+                IO.puts("❌ PostgreSQL not ready: #{inspect(reason)}")
+                Testcontainers.stop_container(postgres_container.container_id, Testcontainers)
                 {:error, reason}
             end
-            
+          
           {:error, reason} ->
-            IO.puts("❌ Failed to start Temporal container: #{inspect(reason)}")
+            IO.puts("❌ Failed to start PostgreSQL container: #{inspect(reason)}")
             {:error, reason}
         end
         
@@ -183,6 +213,24 @@ defmodule Temporal.TestContainer do
     {:error, "Server not ready after health check retries"}
   end
   
+  defp wait_for_postgres_ready(postgres_port, retries \\ 30) do
+    case :gen_tcp.connect(~c"localhost", postgres_port, [:binary, {:active, false}], 2000) do
+      {:ok, socket} ->
+        :gen_tcp.close(socket)
+        IO.puts("   ✅ PostgreSQL is ready on port #{postgres_port}")
+        :ok
+      
+      {:error, reason} ->
+        if retries > 0 do
+          IO.puts("   Waiting for PostgreSQL... (#{retries} retries left)")
+          Process.sleep(1000)
+          wait_for_postgres_ready(postgres_port, retries - 1)
+        else
+          {:error, "PostgreSQL not ready after 30 retries: #{inspect(reason)}"}
+        end
+    end
+  end
+  
   
   defp get_container do
     if Process.whereis(@agent_name) do
@@ -210,13 +258,40 @@ defmodule Temporal.TestContainer do
   def stop_container(container) do
     # Only stop if this is the actual container we're tracking
     case get_container() do
-      %{container: stored_container} when stored_container.container_id == container.container_id ->
-        IO.puts("🛑 Stopping Temporal test container...")
+      %{container: stored_container, postgres_container: postgres_container} when stored_container.container_id == container.container_id ->
+        IO.puts("🛑 Stopping Temporal test containers...")
         
         # Clear the stored container first
         set_container(nil)
         
-        # In version 1.5.1, stop_container takes container_id and name
+        # Stop both containers
+        temporal_result = case Testcontainers.stop_container(container.container_id, Testcontainers) do
+          :ok ->
+            IO.puts("✅ Temporal container stopped")
+            :ok
+          {:error, reason} ->
+            IO.puts("⚠️  Warning: Failed to stop Temporal container: #{inspect(reason)}")
+            {:error, reason}
+        end
+        
+        postgres_result = case Testcontainers.stop_container(postgres_container.container_id, Testcontainers) do
+          :ok ->
+            IO.puts("✅ PostgreSQL container stopped")
+            :ok
+          {:error, reason} ->
+            IO.puts("⚠️  Warning: Failed to stop PostgreSQL container: #{inspect(reason)}")
+            {:error, reason}
+        end
+        
+        case {temporal_result, postgres_result} do
+          {:ok, :ok} -> :ok
+          _ -> {:error, "Failed to stop one or more containers"}
+        end
+        
+      %{container: stored_container} when stored_container.container_id == container.container_id ->
+        # Handle legacy single container case
+        IO.puts("🛑 Stopping Temporal test container...")
+        set_container(nil)
         case Testcontainers.stop_container(container.container_id, Testcontainers) do
           :ok ->
             IO.puts("✅ Temporal container stopped")
