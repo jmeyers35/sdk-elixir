@@ -178,10 +178,10 @@ This document breaks down the requirements from SPEC.md into structured, actiona
 - Store client in BEAM-managed resource
 
 **Acceptance Criteria**:
-- [ ] Successfully connects to local Temporal server
-- [ ] Handles connection failures gracefully
-- [ ] TLS configuration works correctly
-- [ ] Resource properly managed by BEAM GC
+- [x] Successfully connects to local Temporal server
+- [x] Handles connection failures gracefully
+- [x] TLS configuration works correctly
+- [x] Resource properly managed by BEAM GC
 
 **Dependencies**: Task 1.2.2
 

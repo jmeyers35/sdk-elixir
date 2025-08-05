@@ -1,0 +1,4 @@
+# Exclude sdk-core submodule from linting since it's external code
+sdk-core/
+sdk-core/**
+**/sdk-core/**

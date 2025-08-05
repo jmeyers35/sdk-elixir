@@ -22,4 +22,5 @@ impl Drop for WorkerResource {
     }
 }
 
+#[rustler::resource_impl]
 impl rustler::Resource for WorkerResource {}

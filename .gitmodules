@@ -1,0 +1,3 @@
+[submodule "temporal/sdk-core"]
+	path = temporal/sdk-core
+	url = https://github.com/temporalio/sdk-core.git
