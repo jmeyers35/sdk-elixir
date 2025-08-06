@@ -48,7 +48,7 @@ defmodule BasicClientExample do
       workflow_id: workflow_id,
       input: %{
         message: "Hello from Elixir!",
-        timestamp: DateTime.utc_now()
+        timestamp: DateTime.utc_now() |> DateTime.to_iso8601()
       }
     }) do
       {:ok, handle} ->
@@ -58,7 +58,6 @@ defmodule BasicClientExample do
         
       {:error, reason} ->
         Logger.error("Failed to start workflow: #{inspect(reason)}")
-        Logger.info("This might be because no worker is running for the task queue")
     end
     
     # Check final status

@@ -43,8 +43,36 @@ fn term_to_json_value_depth(
     if let Ok(s) = term.decode::<String>() {
         return Ok(serde_json::Value::String(s));
     }
+
+    // Try different integer types - start with smaller types for efficiency
+    if let Ok(n) = term.decode::<i32>() {
+        return Ok(serde_json::Value::Number(serde_json::Number::from(n)));
+    }
+    if let Ok(n) = term.decode::<u32>() {
+        return Ok(serde_json::Value::Number(serde_json::Number::from(n)));
+    }
     if let Ok(n) = term.decode::<i64>() {
         return Ok(serde_json::Value::Number(serde_json::Number::from(n)));
+    }
+    if let Ok(n) = term.decode::<u64>() {
+        // Check if it fits in JSON number range
+        if n <= i64::MAX as u64 {
+            return Ok(serde_json::Value::Number(serde_json::Number::from(
+                n as i64,
+            )));
+        }
+    }
+    if let Ok(n) = term.decode::<isize>() {
+        return Ok(serde_json::Value::Number(serde_json::Number::from(
+            n as i64,
+        )));
+    }
+    if let Ok(n) = term.decode::<usize>() {
+        if n <= i64::MAX as usize {
+            return Ok(serde_json::Value::Number(serde_json::Number::from(
+                n as i64,
+            )));
+        }
     }
     if let Ok(n) = term.decode::<f64>() {
         if let Some(num) = serde_json::Number::from_f64(n) {
@@ -55,6 +83,7 @@ fn term_to_json_value_depth(
         return Ok(serde_json::Value::Bool(b));
     }
     // Try as map (Elixir map -> JSON object)
+    // First try string keys
     if let Ok(map) = term.decode::<HashMap<String, rustler::Term>>() {
         let mut json_map = serde_json::Map::new();
         for (key, value) in map {
@@ -62,6 +91,39 @@ fn term_to_json_value_depth(
         }
         return Ok(serde_json::Value::Object(json_map));
     }
+
+    // Then try atom keys (common in Elixir)
+    if let Ok(map) = term.decode::<HashMap<rustler::Atom, rustler::Term>>() {
+        let mut json_map = serde_json::Map::new();
+        for (key, value) in map {
+            // Convert atom to string - use debug format since atoms don't implement Display
+            let key_str = format!("{:?}", key);
+            json_map.insert(key_str, term_to_json_value_depth(&value, depth + 1)?);
+        }
+        return Ok(serde_json::Value::Object(json_map));
+    }
+
+    // Try as tuples (convert to JSON arrays)
+    if let Ok(tuple) = term.decode::<(rustler::Term,)>() {
+        return Ok(serde_json::Value::Array(vec![term_to_json_value_depth(
+            &tuple.0,
+            depth + 1,
+        )?]));
+    }
+    if let Ok(tuple) = term.decode::<(rustler::Term, rustler::Term)>() {
+        return Ok(serde_json::Value::Array(vec![
+            term_to_json_value_depth(&tuple.0, depth + 1)?,
+            term_to_json_value_depth(&tuple.1, depth + 1)?,
+        ]));
+    }
+    if let Ok(tuple) = term.decode::<(rustler::Term, rustler::Term, rustler::Term)>() {
+        return Ok(serde_json::Value::Array(vec![
+            term_to_json_value_depth(&tuple.0, depth + 1)?,
+            term_to_json_value_depth(&tuple.1, depth + 1)?,
+            term_to_json_value_depth(&tuple.2, depth + 1)?,
+        ]));
+    }
+
     // Try as list (Elixir list -> JSON array)
     if let Ok(list) = term.decode::<Vec<rustler::Term>>() {
         let json_array: Result<Vec<serde_json::Value>, String> = list
@@ -406,4 +468,305 @@ fn worker_complete_activity_task<'a>(
     _completion: Term<'a>,
 ) -> NifResult<Term<'a>> {
     Ok(rustler::types::atom::error().to_term(env))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustler::{Encoder, Env, Term};
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    /// Helper to create a test environment and encode values
+    fn with_test_env<F, R>(f: F) -> R
+    where
+        F: for<'a> FnOnce(Env<'a>) -> R,
+    {
+        rustler::env::OwnedEnv::new().run(f)
+    }
+
+    /// Create a Rustler Term from a value that can be encoded
+    fn encode_term<'a, T: Encoder>(env: Env<'a>, value: T) -> Term<'a> {
+        value.encode(env)
+    }
+
+    #[test]
+    fn test_term_to_json_basic_types() {
+        with_test_env(|env| {
+            // Test string
+            let string_term = encode_term(env, "hello world");
+            let result = term_to_json_value(&string_term).unwrap();
+            assert_eq!(result, json!("hello world"));
+
+            // Test integer i32
+            let int_term = encode_term(env, 42i32);
+            let result = term_to_json_value(&int_term).unwrap();
+            assert_eq!(result, json!(42));
+
+            // Test integer u32
+            let uint_term = encode_term(env, 123u32);
+            let result = term_to_json_value(&uint_term).unwrap();
+            assert_eq!(result, json!(123));
+
+            // Test integer i64
+            let int64_term = encode_term(env, 9223372036854775807i64);
+            let result = term_to_json_value(&int64_term).unwrap();
+            assert_eq!(result, json!(9223372036854775807i64));
+
+            // Test float
+            let float_term = encode_term(env, 3.14159f64);
+            let result = term_to_json_value(&float_term).unwrap();
+            assert_eq!(result, json!(3.14159));
+
+            // Test boolean true
+            let bool_term = encode_term(env, true);
+            let result = term_to_json_value(&bool_term).unwrap();
+            assert_eq!(result, json!(true));
+
+            // Test boolean false
+            let bool_term = encode_term(env, false);
+            let result = term_to_json_value(&bool_term).unwrap();
+            assert_eq!(result, json!(false));
+
+            // Test nil/null (encoded as unit type)
+            let nil_term = encode_term(env, ());
+            let result = term_to_json_value(&nil_term).unwrap();
+            assert_eq!(result, json!(null));
+        });
+    }
+
+    #[test]
+    fn test_term_to_json_large_integers() {
+        with_test_env(|env| {
+            // Test u64 within i64 range
+            let valid_u64_term = encode_term(env, 9223372036854775806u64);
+            let result = term_to_json_value(&valid_u64_term).unwrap();
+            assert_eq!(result, json!(9223372036854775806i64));
+
+            // Test u64 at boundary (i64::MAX as u64)
+            let boundary_u64_term = encode_term(env, i64::MAX as u64);
+            let result = term_to_json_value(&boundary_u64_term).unwrap();
+            assert_eq!(result, json!(i64::MAX));
+
+            // Test usize within bounds
+            let usize_term = encode_term(env, 1000usize);
+            let result = term_to_json_value(&usize_term).unwrap();
+            assert_eq!(result, json!(1000));
+
+            // Test isize
+            let isize_term = encode_term(env, -500isize);
+            let result = term_to_json_value(&isize_term).unwrap();
+            assert_eq!(result, json!(-500));
+        });
+    }
+
+    #[test]
+    fn test_term_to_json_collections() {
+        with_test_env(|env| {
+            // Test empty list
+            let empty_list: Vec<i32> = vec![];
+            let empty_list_term = encode_term(env, empty_list);
+            let result = term_to_json_value(&empty_list_term).unwrap();
+            assert_eq!(result, json!([]));
+
+            // Test list with mixed types
+            // Note: In practice, Elixir lists are homogeneous, but we'll test conversion capabilities
+            let list_term = encode_term(env, vec![1i32, 2i32, 3i32]);
+            let result = term_to_json_value(&list_term).unwrap();
+            assert_eq!(result, json!([1, 2, 3]));
+
+            // Test string list
+            let string_list = vec!["hello".to_string(), "world".to_string()];
+            let string_list_term = encode_term(env, string_list);
+            let result = term_to_json_value(&string_list_term).unwrap();
+            assert_eq!(result, json!(["hello", "world"]));
+        });
+    }
+
+    #[test]
+    fn test_term_to_json_maps() {
+        with_test_env(|env| {
+            // Test empty map with string keys
+            let empty_map: HashMap<String, i32> = HashMap::new();
+            let empty_map_term = encode_term(env, empty_map);
+            let result = term_to_json_value(&empty_map_term).unwrap();
+            assert_eq!(result, json!({}));
+
+            // Test map with string keys
+            let mut string_map = HashMap::new();
+            string_map.insert("name".to_string(), encode_term(env, "Alice"));
+            string_map.insert("age".to_string(), encode_term(env, 30i32));
+            string_map.insert("active".to_string(), encode_term(env, true));
+            let map_term = encode_term(env, string_map);
+            let result = term_to_json_value(&map_term).unwrap();
+
+            // Since HashMap order is not guaranteed, check keys individually
+            let obj = result.as_object().unwrap();
+            assert_eq!(obj.len(), 3);
+            assert!(obj.contains_key("name"));
+            assert!(obj.contains_key("age"));
+            assert!(obj.contains_key("active"));
+        });
+    }
+
+    #[test]
+    fn test_term_to_json_atom_keys() {
+        with_test_env(|env| {
+            // Test map with atom keys (common Elixir pattern)
+            let mut atom_map = HashMap::new();
+            let name_atom = rustler::Atom::from_str(env, "name").unwrap();
+            let age_atom = rustler::Atom::from_str(env, "age").unwrap();
+
+            atom_map.insert(name_atom, encode_term(env, "Bob"));
+            atom_map.insert(age_atom, encode_term(env, 25i32));
+            let map_term = encode_term(env, atom_map);
+            let result = term_to_json_value(&map_term).unwrap();
+
+            let obj = result.as_object().unwrap();
+            assert_eq!(obj.len(), 2);
+            // Atom keys get converted using Debug format
+            assert!(obj.contains_key("name"));
+            assert!(obj.contains_key("age"));
+        });
+    }
+
+    #[test]
+    fn test_term_to_json_tuples() {
+        with_test_env(|env| {
+            // Test single element tuple
+            let single_tuple = (encode_term(env, "hello"),);
+            let tuple_term = encode_term(env, single_tuple);
+            let result = term_to_json_value(&tuple_term).unwrap();
+            assert_eq!(result, json!(["hello"]));
+
+            // Test two element tuple
+            let two_tuple = (encode_term(env, "key"), encode_term(env, 42i32));
+            let tuple_term = encode_term(env, two_tuple);
+            let result = term_to_json_value(&tuple_term).unwrap();
+            assert_eq!(result, json!(["key", 42]));
+
+            // Test three element tuple
+            let three_tuple = (
+                encode_term(env, "first"),
+                encode_term(env, 123i32),
+                encode_term(env, true),
+            );
+            let tuple_term = encode_term(env, three_tuple);
+            let result = term_to_json_value(&tuple_term).unwrap();
+            assert_eq!(result, json!(["first", 123, true]));
+        });
+    }
+
+    #[test]
+    fn test_term_to_json_nested_structures() {
+        with_test_env(|env| {
+            // Test nested map
+            let mut inner_map = HashMap::new();
+            inner_map.insert("inner_key".to_string(), encode_term(env, "inner_value"));
+
+            let mut outer_map = HashMap::new();
+            outer_map.insert("outer_key".to_string(), encode_term(env, "outer_value"));
+            outer_map.insert("nested".to_string(), encode_term(env, inner_map));
+
+            let nested_term = encode_term(env, outer_map);
+            let result = term_to_json_value(&nested_term).unwrap();
+
+            let _expected = json!({
+                "outer_key": "outer_value",
+                "nested": {
+                    "inner_key": "inner_value"
+                }
+            });
+
+            let obj = result.as_object().unwrap();
+            assert_eq!(obj.len(), 2);
+            assert!(obj.contains_key("outer_key"));
+            assert!(obj.contains_key("nested"));
+
+            let nested_obj = obj["nested"].as_object().unwrap();
+            assert_eq!(nested_obj["inner_key"], "inner_value");
+        });
+    }
+
+    #[test]
+    fn test_term_to_json_depth_limit() {
+        with_test_env(|env| {
+            // Create deeply nested structure to test depth limit
+            let mut current_map = HashMap::new();
+            current_map.insert("value".to_string(), encode_term(env, 42i32));
+
+            // Create nested maps up to the depth limit
+            for i in 0..MAX_JSON_DEPTH {
+                let mut next_map = HashMap::new();
+                next_map.insert(format!("level_{}", i), encode_term(env, current_map));
+                current_map = next_map;
+            }
+
+            let deep_term = encode_term(env, current_map);
+            let result = term_to_json_value(&deep_term);
+
+            // Should fail due to depth limit
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains("JSON nesting too deep"));
+        });
+    }
+
+    #[test]
+    fn test_term_to_json_special_floats() {
+        with_test_env(|env| {
+            // Test normal float
+            let normal_float = encode_term(env, 1.23f64);
+            let result = term_to_json_value(&normal_float).unwrap();
+            assert_eq!(result, json!(1.23));
+
+            // Test zero
+            let zero_float = encode_term(env, 0.0f64);
+            let result = term_to_json_value(&zero_float).unwrap();
+            assert_eq!(result, json!(0.0));
+
+            // Test negative float
+            let neg_float = encode_term(env, -3.14f64);
+            let result = term_to_json_value(&neg_float).unwrap();
+            assert_eq!(result, json!(-3.14));
+
+            // Note: NaN and Infinity are not directly encodable via rustler in this context
+            // but serde_json handles them properly when they occur
+        });
+    }
+
+    #[test]
+    fn test_term_to_json_workflow_input_patterns() {
+        with_test_env(|env| {
+            // Test typical workflow input structure - map with various data types
+            let mut workflow_input = HashMap::new();
+            workflow_input.insert("user_id".to_string(), encode_term(env, 12345i32));
+            workflow_input.insert("username".to_string(), encode_term(env, "alice"));
+            workflow_input.insert("is_premium".to_string(), encode_term(env, true));
+            workflow_input.insert("balance".to_string(), encode_term(env, 99.99f64));
+            workflow_input.insert(
+                "tags".to_string(),
+                encode_term(env, vec!["vip".to_string(), "early_adopter".to_string()]),
+            );
+
+            // Add nested settings
+            let mut settings = HashMap::new();
+            settings.insert("theme".to_string(), encode_term(env, "dark"));
+            settings.insert("notifications".to_string(), encode_term(env, true));
+            workflow_input.insert("settings".to_string(), encode_term(env, settings));
+
+            let input_term = encode_term(env, workflow_input);
+            let result = term_to_json_value(&input_term).unwrap();
+
+            let obj = result.as_object().unwrap();
+            assert_eq!(obj["user_id"], 12345);
+            assert_eq!(obj["username"], "alice");
+            assert_eq!(obj["is_premium"], true);
+            assert_eq!(obj["balance"], 99.99);
+            assert_eq!(obj["tags"], json!(["vip", "early_adopter"]));
+
+            let settings_obj = obj["settings"].as_object().unwrap();
+            assert_eq!(settings_obj["theme"], "dark");
+            assert_eq!(settings_obj["notifications"], true);
+        });
+    }
 }

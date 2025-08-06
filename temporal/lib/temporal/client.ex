@@ -339,7 +339,7 @@ defmodule Temporal.Client do
       {:execution_timeout, v} -> {"execution_timeout", v}
       {:run_timeout, v} -> {"run_timeout", v}
       {:task_timeout, v} -> {"task_timeout", v}
-      {:input, v} -> {"input", v}
+      {:input, v} -> {"input", List.wrap(v)}
       {k, v} when is_atom(k) -> {Atom.to_string(k), v}
       {k, v} when is_binary(k) -> {k, v}
     end)

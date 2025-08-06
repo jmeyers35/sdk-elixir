@@ -217,6 +217,15 @@ This document breaks down the requirements from SPEC.md into structured, actiona
 - Input validation could be more comprehensive (basic validation sufficient for MVP)
 - Error messages could be sanitized (detailed errors helpful for development)
 
+**Serialization Gap (Post-MVP Technical Debt)**:
+- Current JSON-only serialization breaks Temporal's composable PayloadConverter pattern
+- Missing proper metadata structure (content-type, encoding markers)
+- No support for binary/protobuf payloads, timestamps, durations
+- Hardcoded 32-level depth limit risks stack overflow
+- Memory inefficient with unnecessary allocations
+- Diverges from Go/Python SDK patterns, may cause cross-language compatibility issues
+- Requires implementing CompositePayloadConverter with fallback chains (nil → binary → protobuf → JSON)
+
 **Dependencies**: Task 2.1.1
 
 **Complexity**: Medium - Network operations with serialization

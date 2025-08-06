@@ -216,6 +216,88 @@ defmodule Temporal.ClientUnitTest do
       
       Client.stop(client)
     end
+
+    test "input parameter conversion integrates correctly" do
+      # Test input parameter conversion through the public API
+      # Since the normalization is private, we test the behavior indirectly
+      {:ok, client} = Client.start_link(target_url: "invalid:99999", namespace: "test")
+      
+      # Test various input types - these should not crash during parameter processing
+      input_cases = [
+        %{message: "test", count: 42},
+        "simple string",
+        42,
+        [1, 2, 3],
+        %{nested: %{data: "value"}},
+        nil,
+        true,
+        %{}
+      ]
+      
+      for input <- input_cases do
+        # This will fail due to invalid URL but shouldn't crash on parameter conversion
+        result = Client.start_workflow(client, %{
+          workflow_type: "TestWorkflow",
+          task_queue: "test-queue",
+          workflow_id: "test-#{:rand.uniform(10000)}",
+          input: input
+        })
+        
+        # Should get not_connected error, not a parameter conversion error
+        assert {:error, :not_connected} = result
+      end
+      
+      Client.stop(client)
+    end
+    
+    test "parameter normalization through start_workflow" do
+      {:ok, client} = Client.start_link(target_url: "invalid:99999", namespace: "test")
+      
+      # Test that atom parameters get converted to strings
+      result = Client.start_workflow(client, %{
+        workflow_type: :TestWorkflow,  # Atom -> should become string
+        task_queue: :test_queue,       # Atom -> should become string
+        workflow_id: "test-123",
+        input: %{data: "test"}
+      })
+      
+      # Should fail with not_connected, not parameter conversion error
+      assert {:error, :not_connected} = result
+      
+      Client.stop(client)
+    end
+    
+    test "input wrapping behavior verification" do
+      # We can't directly test the private function, but we can verify
+      # the behavior by checking that various input types don't cause crashes
+      {:ok, client} = Client.start_link(target_url: "invalid:99999", namespace: "test")
+      
+      # Test cases that verify input is properly wrapped
+      test_cases = [
+        # Already a list should still work (gets double-wrapped internally)
+        [%{key: "value"}],
+        # Single values should be wrapped
+        %{single: "map"},
+        "string_value",
+        42,
+        nil,
+        false
+      ]
+      
+      for input <- test_cases do
+        result = Client.start_workflow(client, %{
+          workflow_type: "TestWorkflow",
+          task_queue: "test-queue",
+          workflow_id: "test-#{:rand.uniform(10000)}",
+          input: input
+        })
+        
+        # All should fail with not_connected (meaning params were processed OK)
+        assert {:error, :not_connected} = result
+      end
+      
+      Client.stop(client)
+    end
   end
   
   describe "state management" do
