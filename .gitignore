@@ -28,3 +28,6 @@ temporal-*.tar
 
 # NIFs
 /priv/native/
+
+# Crush local data
+/.crush/
