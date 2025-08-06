@@ -5,6 +5,8 @@ defmodule Temporal.Client do
   This module provides a high-level, idiomatic Elixir interface for:
   - Managing connections to Temporal servers
   - Starting workflow executions
+  - Signaling workflow executions
+  - Querying workflow executions
   - Handling configuration and connection lifecycle
   - Integrating with OTP supervision trees
   
@@ -106,6 +108,57 @@ defmodule Temporal.Client do
     GenServer.call(client, {:start_workflow, params})
   end
   
+  @doc """
+  Sends a signal to a workflow execution.
+  
+  ## Parameters
+  
+    * `client` - The client process
+    * `params` - Signal parameters map with required fields:
+      * `:workflow_id` - The workflow identifier to signal
+      * `:signal_name` - The signal name to send
+      * `:run_id` - Optional specific run ID to signal
+      * `:input` - Optional signal input data
+      * `:namespace` - Optional namespace (defaults to client namespace)
+  
+  ## Examples
+  
+      :ok = Temporal.Client.signal_workflow(client, %{
+        workflow_id: "order-123",
+        signal_name: "cancel_order",
+        input: %{reason: "customer_request"}
+      })
+  """
+  @spec signal_workflow(GenServer.server(), map()) :: :ok | {:error, term()}
+  def signal_workflow(client, params) when is_map(params) do
+    GenServer.call(client, {:signal_workflow, params})
+  end
+
+  @doc """
+  Queries a workflow execution.
+  
+  ## Parameters
+  
+    * `client` - The client process
+    * `params` - Query parameters map with required fields:
+      * `:workflow_id` - The workflow identifier to query
+      * `:query_type` - The query type name
+      * `:run_id` - Optional specific run ID to query
+      * `:input` - Optional query input data
+      * `:namespace` - Optional namespace (defaults to client namespace)
+  
+  ## Examples
+  
+      {:ok, result} = Temporal.Client.query_workflow(client, %{
+        workflow_id: "order-123",
+        query_type: "get_status"
+      })
+  """
+  @spec query_workflow(GenServer.server(), map()) :: {:ok, term()} | {:error, term()}
+  def query_workflow(client, params) when is_map(params) do
+    GenServer.call(client, {:query_workflow, params})
+  end
+
   @doc """
   Stops the client process gracefully.
   """
@@ -230,6 +283,90 @@ defmodule Temporal.Client do
     end
   end
   
+  def handle_call({:signal_workflow, params}, _from, state) do
+    # Ensure we're connected
+    state = ensure_connected(state)
+    
+    case state.status do
+      :connected ->
+        # Add required string conversions
+        params = normalize_signal_params(params)
+        
+        case Native.client_signal_workflow(state.client_resource, params) do
+          :ok ->
+            # Emit telemetry event
+            :telemetry.execute(
+              [:temporal, :client, :workflow, :signaled],
+              %{},
+              %{
+                workflow_id: params["workflow_id"],
+                signal_name: params["signal_name"],
+                run_id: params["run_id"]
+              }
+            )
+            
+            {:reply, :ok, state}
+          
+          {:error, reason} = error ->
+            Logger.error("Failed to signal workflow: #{inspect(reason)}")
+            
+            # Emit telemetry event for failure
+            :telemetry.execute(
+              [:temporal, :client, :workflow, :signal_failed],
+              %{},
+              %{reason: reason}
+            )
+            
+            {:reply, error, state}
+        end
+      
+      _ ->
+        {:reply, {:error, :not_connected}, state}
+    end
+  end
+
+  def handle_call({:query_workflow, params}, _from, state) do
+    # Ensure we're connected
+    state = ensure_connected(state)
+    
+    case state.status do
+      :connected ->
+        # Add required string conversions
+        params = normalize_query_params(params)
+        
+        case Native.client_query_workflow(state.client_resource, params) do
+          {:ok, result} ->
+            # Emit telemetry event
+            :telemetry.execute(
+              [:temporal, :client, :workflow, :queried],
+              %{},
+              %{
+                workflow_id: params["workflow_id"],
+                query_type: params["query_type"],
+                run_id: params["run_id"]
+              }
+            )
+            
+            {:reply, {:ok, result}, state}
+          
+          {:error, reason} = error ->
+            Logger.error("Failed to query workflow: #{inspect(reason)}")
+            
+            # Emit telemetry event for failure
+            :telemetry.execute(
+              [:temporal, :client, :workflow, :query_failed],
+              %{},
+              %{reason: reason}
+            )
+            
+            {:reply, error, state}
+        end
+      
+      _ ->
+        {:reply, {:error, :not_connected}, state}
+    end
+  end
+
   def handle_call(:status, _from, state) do
     {:reply, state.status, state}
   end
@@ -339,6 +476,34 @@ defmodule Temporal.Client do
       {:execution_timeout, v} -> {"execution_timeout", v}
       {:run_timeout, v} -> {"run_timeout", v}
       {:task_timeout, v} -> {"task_timeout", v}
+      {:input, v} -> {"input", List.wrap(v)}
+      {k, v} when is_atom(k) -> {Atom.to_string(k), v}
+      {k, v} when is_binary(k) -> {k, v}
+    end)
+    |> Map.new()
+  end
+
+  defp normalize_signal_params(params) do
+    params
+    |> Enum.map(fn
+      {:workflow_id, v} -> {"workflow_id", to_string(v)}
+      {:run_id, v} -> {"run_id", to_string(v)}
+      {:signal_name, v} -> {"signal_name", to_string(v)}
+      {:namespace, v} -> {"namespace", to_string(v)}
+      {:input, v} -> {"input", List.wrap(v)}
+      {k, v} when is_atom(k) -> {Atom.to_string(k), v}
+      {k, v} when is_binary(k) -> {k, v}
+    end)
+    |> Map.new()
+  end
+
+  defp normalize_query_params(params) do
+    params
+    |> Enum.map(fn
+      {:workflow_id, v} -> {"workflow_id", to_string(v)}
+      {:run_id, v} -> {"run_id", to_string(v)}
+      {:query_type, v} -> {"query_type", to_string(v)}
+      {:namespace, v} -> {"namespace", to_string(v)}
       {:input, v} -> {"input", List.wrap(v)}
       {k, v} when is_atom(k) -> {Atom.to_string(k), v}
       {k, v} when is_binary(k) -> {k, v}

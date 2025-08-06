@@ -281,10 +281,20 @@ This document breaks down the requirements from SPEC.md into structured, actiona
 - Error handling for non-existent workflows
 
 **Acceptance Criteria**:
-- [ ] Signals sent to workflows successfully
-- [ ] Queries return expected responses
-- [ ] Proper error handling for invalid workflows
-- [ ] Input/output serialization works correctly
+- [x] Signals sent to workflows successfully
+- [x] Queries return expected responses
+- [x] Proper error handling for invalid workflows
+- [x] Input/output serialization works correctly
+
+**COMPLETED** ✅
+
+**Implementation Notes**:
+- Implemented `client_signal_workflow` and `client_query_workflow` NIFs
+- Added comprehensive parameter validation and error handling
+- Integrated with Elixir GenServer API layer with telemetry
+- Fixed critical Arc thread safety issue in Rust client access patterns
+- Added comprehensive test coverage including integration tests
+- Created example application demonstrating signal/query usage
 
 **Dependencies**: Task 2.1.3
 

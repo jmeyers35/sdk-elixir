@@ -108,14 +108,14 @@ defmodule Temporal.ClientGenServerTest do
     
     test "returns error for invalid server" do
       {:ok, client} = Client.start_link(
-        target_url: "invalid-host:99999",
+        target_url: "invalid-host:7233",
         namespace: "default"
       )
       
       assert {:error, reason} = Client.connect(client)
       assert is_binary(reason)
-      # Validate meaningful error content
-      assert reason =~ ~r/connection (failed|refused|timeout)/i
+      # Validate meaningful error content - can be DNS error or connection error
+      assert reason =~ ~r/(connection (failed|refused|timeout)|dns error|failed to lookup)/i
       assert Client.status(client) == :error
       
       Client.stop(client)

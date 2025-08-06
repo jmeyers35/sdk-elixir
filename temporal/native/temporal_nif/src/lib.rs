@@ -6,7 +6,10 @@ use tokio::runtime::Runtime;
 mod client;
 mod worker;
 
-use client::{ClientOptions, ClientResource, ClientTlsConfig, WorkflowStartParams};
+use client::{
+    ClientOptions, ClientResource, ClientTlsConfig, WorkflowQueryParams, WorkflowSignalParams,
+    WorkflowStartParams,
+};
 use worker::WorkerResource;
 
 /// Global shared runtime for all Temporal operations
@@ -137,6 +140,41 @@ fn term_to_json_value_depth(
         return Ok(serde_json::Value::Null);
     }
     Err("Unsupported term type for JSON conversion".to_string())
+}
+
+/// Convert serde_json::Value back to Rustler Term
+fn json_value_to_elixir_term<'a>(
+    env: Env<'a>,
+    value: &serde_json::Value,
+) -> Result<rustler::Term<'a>, String> {
+    match value {
+        serde_json::Value::Null => Ok(rustler::types::atom::nil().encode(env)),
+        serde_json::Value::Bool(b) => Ok(b.encode(env)),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(i.encode(env))
+            } else if let Some(f) = n.as_f64() {
+                Ok(f.encode(env))
+            } else {
+                Err("Invalid number format".to_string())
+            }
+        }
+        serde_json::Value::String(s) => Ok(s.encode(env)),
+        serde_json::Value::Array(arr) => {
+            let elixir_list: Result<Vec<rustler::Term>, String> = arr
+                .iter()
+                .map(|v| json_value_to_elixir_term(env, v))
+                .collect();
+            Ok(elixir_list?.encode(env))
+        }
+        serde_json::Value::Object(obj) => {
+            let elixir_map: Result<std::collections::HashMap<String, rustler::Term>, String> = obj
+                .iter()
+                .map(|(k, v)| json_value_to_elixir_term(env, v).map(|term| (k.clone(), term)))
+                .collect();
+            Ok(elixir_map?.encode(env))
+        }
+    }
 }
 
 // Runtime is managed globally via OnceLock - no need for a separate resource
@@ -406,22 +444,197 @@ fn client_start_workflow<'a>(
     }
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyIo")]
 fn client_signal_workflow<'a>(
     env: Env<'a>,
-    _client: ResourceArc<ClientResource>,
-    _params: Term<'a>,
+    client: ResourceArc<ClientResource>,
+    params: Term<'a>,
 ) -> NifResult<Term<'a>> {
-    Ok(rustler::types::atom::error().to_term(env))
+    // Parse parameters from Elixir term
+    let params_map: HashMap<String, rustler::Term> = match params.decode() {
+        Ok(map) => map,
+        Err(_) => {
+            let error_tuple = (rustler::types::atom::error(), "Parameters must be a map");
+            return Ok(error_tuple.encode(env));
+        }
+    };
+
+    // Extract required fields
+    let workflow_id = match params_map.get("workflow_id") {
+        Some(term) => match term.decode::<String>() {
+            Ok(id) => id,
+            Err(_) => {
+                let error_tuple = (
+                    rustler::types::atom::error(),
+                    "workflow_id must be a string",
+                );
+                return Ok(error_tuple.encode(env));
+            }
+        },
+        None => {
+            let error_tuple = (rustler::types::atom::error(), "workflow_id is required");
+            return Ok(error_tuple.encode(env));
+        }
+    };
+
+    let signal_name = match params_map.get("signal_name") {
+        Some(term) => match term.decode::<String>() {
+            Ok(name) => name,
+            Err(_) => {
+                let error_tuple = (
+                    rustler::types::atom::error(),
+                    "signal_name must be a string",
+                );
+                return Ok(error_tuple.encode(env));
+            }
+        },
+        None => {
+            let error_tuple = (rustler::types::atom::error(), "signal_name is required");
+            return Ok(error_tuple.encode(env));
+        }
+    };
+
+    // Extract optional fields
+    let run_id = params_map
+        .get("run_id")
+        .and_then(|term| term.decode::<String>().ok());
+
+    let namespace = params_map
+        .get("namespace")
+        .and_then(|term| term.decode::<String>().ok());
+
+    // Parse input using existing JSON conversion
+    let input: Option<Vec<serde_json::Value>> = params_map.get("input").and_then(|term| {
+        let elixir_list: Vec<rustler::Term> = term.decode().ok()?;
+        let json_values: Result<Vec<serde_json::Value>, _> = elixir_list
+            .iter()
+            .map(|elixir_term| term_to_json_value(elixir_term))
+            .collect();
+        json_values.ok()
+    });
+
+    // Build parameters struct
+    let signal_params = WorkflowSignalParams {
+        workflow_id,
+        run_id,
+        signal_name,
+        input,
+        namespace,
+    };
+
+    // Use shared runtime for signal operation
+    let rt = get_runtime();
+
+    match rt.block_on(async { client.signal_workflow(signal_params).await }) {
+        Ok(()) => Ok(rustler::types::atom::ok().encode(env)),
+        Err(err) => {
+            let error_tuple = (rustler::types::atom::error(), err);
+            Ok(error_tuple.encode(env))
+        }
+    }
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyIo")]
 fn client_query_workflow<'a>(
     env: Env<'a>,
-    _client: ResourceArc<ClientResource>,
-    _params: Term<'a>,
+    client: ResourceArc<ClientResource>,
+    params: Term<'a>,
 ) -> NifResult<Term<'a>> {
-    Ok(rustler::types::atom::error().to_term(env))
+    // Parse parameters from Elixir term
+    let params_map: HashMap<String, rustler::Term> = match params.decode() {
+        Ok(map) => map,
+        Err(_) => {
+            let error_tuple = (rustler::types::atom::error(), "Parameters must be a map");
+            return Ok(error_tuple.encode(env));
+        }
+    };
+
+    // Extract required fields
+    let workflow_id = match params_map.get("workflow_id") {
+        Some(term) => match term.decode::<String>() {
+            Ok(id) => id,
+            Err(_) => {
+                let error_tuple = (
+                    rustler::types::atom::error(),
+                    "workflow_id must be a string",
+                );
+                return Ok(error_tuple.encode(env));
+            }
+        },
+        None => {
+            let error_tuple = (rustler::types::atom::error(), "workflow_id is required");
+            return Ok(error_tuple.encode(env));
+        }
+    };
+
+    let query_type = match params_map.get("query_type") {
+        Some(term) => match term.decode::<String>() {
+            Ok(qt) => qt,
+            Err(_) => {
+                let error_tuple = (rustler::types::atom::error(), "query_type must be a string");
+                return Ok(error_tuple.encode(env));
+            }
+        },
+        None => {
+            let error_tuple = (rustler::types::atom::error(), "query_type is required");
+            return Ok(error_tuple.encode(env));
+        }
+    };
+
+    // Extract optional fields
+    let run_id = params_map
+        .get("run_id")
+        .and_then(|term| term.decode::<String>().ok());
+
+    let namespace = params_map
+        .get("namespace")
+        .and_then(|term| term.decode::<String>().ok());
+
+    // Parse input using existing JSON conversion
+    let input: Option<Vec<serde_json::Value>> = params_map.get("input").and_then(|term| {
+        let elixir_list: Vec<rustler::Term> = term.decode().ok()?;
+        let json_values: Result<Vec<serde_json::Value>, _> = elixir_list
+            .iter()
+            .map(|elixir_term| term_to_json_value(elixir_term))
+            .collect();
+        json_values.ok()
+    });
+
+    // Build parameters struct
+    let query_params = WorkflowQueryParams {
+        workflow_id,
+        run_id,
+        query_type,
+        input,
+        namespace,
+    };
+
+    // Use shared runtime for query operation
+    let rt = get_runtime();
+
+    match rt.block_on(async { client.query_workflow(query_params).await }) {
+        Ok(response) => {
+            if let Some(rejection) = response.query_rejected {
+                let error_tuple = (rustler::types::atom::error(), rejection);
+                Ok(error_tuple.encode(env))
+            } else {
+                let result = match response.result {
+                    Some(json_value) => {
+                        // Convert JSON back to Elixir term
+                        json_value_to_elixir_term(env, &json_value)
+                            .unwrap_or_else(|_| rustler::types::atom::nil().encode(env))
+                    }
+                    None => rustler::types::atom::nil().encode(env),
+                };
+                let ok_tuple = (rustler::types::atom::ok(), result);
+                Ok(ok_tuple.encode(env))
+            }
+        }
+        Err(err) => {
+            let error_tuple = (rustler::types::atom::error(), err);
+            Ok(error_tuple.encode(env))
+        }
+    }
 }
 
 // Worker functions

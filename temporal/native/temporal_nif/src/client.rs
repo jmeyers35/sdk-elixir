@@ -2,9 +2,14 @@ use std::sync::Arc;
 use temporal_client::{
     Client, ClientOptionsBuilder, NamespacedClient, RetryClient, TlsConfig, WorkflowService,
 };
-use temporal_sdk_core_protos::temporal::api::common::v1::{Payload, Payloads, WorkflowType};
+use temporal_sdk_core_protos::temporal::api::common::v1::{
+    Payload, Payloads, WorkflowExecution, WorkflowType,
+};
+use temporal_sdk_core_protos::temporal::api::query::v1::WorkflowQuery;
 use temporal_sdk_core_protos::temporal::api::taskqueue::v1::TaskQueue;
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::StartWorkflowExecutionRequest;
+use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
+    QueryWorkflowRequest, SignalWorkflowExecutionRequest, StartWorkflowExecutionRequest,
+};
 use url::Url;
 use uuid::Uuid;
 
@@ -58,6 +63,36 @@ pub struct WorkflowHandle {
     pub first_execution_run_id: String,
 }
 
+/// Parameters for signaling a workflow
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // Will be used in NIF implementation
+pub struct WorkflowSignalParams {
+    pub workflow_id: String,
+    pub run_id: Option<String>,
+    pub signal_name: String,
+    pub input: Option<Vec<serde_json::Value>>,
+    pub namespace: Option<String>,
+}
+
+/// Parameters for querying a workflow
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // Will be used in NIF implementation
+pub struct WorkflowQueryParams {
+    pub workflow_id: String,
+    pub run_id: Option<String>,
+    pub query_type: String,
+    pub input: Option<Vec<serde_json::Value>>,
+    pub namespace: Option<String>,
+}
+
+/// Query response data
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // Will be used in NIF implementation
+pub struct QueryResponse {
+    pub result: Option<serde_json::Value>,
+    pub query_rejected: Option<String>, // Rejection reason if query was rejected
+}
+
 impl ClientResource {
     /// Create a new Temporal client using sdk-core directly following OSS SDK patterns
     pub async fn connect(
@@ -65,8 +100,15 @@ impl ClientResource {
         namespace: String,
         options: ClientOptions,
     ) -> Result<Self, String> {
-        // Simple URL parsing - let Url::parse handle validation like other SDKs
-        let parsed_url = Url::parse(&target_url).map_err(|e| format!("Invalid URL: {}", e))?;
+        // Only support "host:port" format, determine scheme based on TLS configuration
+        let scheme = if options.tls.is_some() {
+            "https"
+        } else {
+            "http"
+        };
+        let full_url = format!("{}://{}", scheme, target_url);
+        let parsed_url =
+            Url::parse(&full_url).map_err(|e| format!("Invalid URL '{}': {}", full_url, e))?;
 
         // Build client options using sdk-core's ClientOptionsBuilder
         let mut builder = ClientOptionsBuilder::default();
@@ -214,6 +256,134 @@ impl ClientResource {
             run_id: inner_response.run_id.clone(),
             workflow_id: params.workflow_id,
             first_execution_run_id: inner_response.run_id,
+        })
+    }
+
+    /// Send a signal to a workflow execution
+    #[allow(dead_code)] // Will be used in NIF implementation
+    pub async fn signal_workflow(&self, params: WorkflowSignalParams) -> Result<(), String> {
+        // Serialize signal input to JSON payloads
+        let input_payloads = if let Some(inputs) = params.input {
+            let mut payloads = Vec::new();
+            for input in inputs {
+                let json_bytes = serde_json::to_vec(&input)
+                    .map_err(|e| format!("Failed to serialize signal input: {}", e))?;
+
+                let payload = Payload {
+                    metadata: [("encoding".to_string(), "json/plain".as_bytes().to_vec())].into(),
+                    data: json_bytes,
+                };
+                payloads.push(payload);
+            }
+            Some(Payloads { payloads })
+        } else {
+            None
+        };
+
+        // Build signal request
+        #[allow(deprecated)]
+        let request = SignalWorkflowExecutionRequest {
+            namespace: params
+                .namespace
+                .unwrap_or_else(|| self.inner.namespace().to_owned()),
+            workflow_execution: Some(WorkflowExecution {
+                workflow_id: params.workflow_id,
+                run_id: params.run_id.unwrap_or_default(),
+            }),
+            signal_name: params.signal_name,
+            input: input_payloads,
+            identity: "".to_string(), // Will be set by client
+            request_id: Uuid::new_v4().to_string(),
+            control: "".to_string(),
+            header: None,
+            links: vec![],
+        };
+
+        // Execute signal request
+        let mut client = (*self.inner).clone();
+        client
+            .signal_workflow_execution(request)
+            .await
+            .map_err(|e| format!("Signal workflow failed: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Query a workflow execution
+    #[allow(dead_code)] // Will be used in NIF implementation
+    pub async fn query_workflow(
+        &self,
+        params: WorkflowQueryParams,
+    ) -> Result<QueryResponse, String> {
+        // Serialize query input to JSON payloads
+        let input_payloads = if let Some(inputs) = params.input {
+            let mut payloads = Vec::new();
+            for input in inputs {
+                let json_bytes = serde_json::to_vec(&input)
+                    .map_err(|e| format!("Failed to serialize query input: {}", e))?;
+
+                let payload = Payload {
+                    metadata: [("encoding".to_string(), "json/plain".as_bytes().to_vec())].into(),
+                    data: json_bytes,
+                };
+                payloads.push(payload);
+            }
+            Some(Payloads { payloads })
+        } else {
+            None
+        };
+
+        // Build query request
+        let request = QueryWorkflowRequest {
+            namespace: params
+                .namespace
+                .unwrap_or_else(|| self.inner.namespace().to_owned()),
+            execution: Some(WorkflowExecution {
+                workflow_id: params.workflow_id,
+                run_id: params.run_id.unwrap_or_default(),
+            }),
+            query: Some(WorkflowQuery {
+                query_type: params.query_type,
+                query_args: input_payloads,
+                header: None,
+            }),
+            query_reject_condition: 0, // QUERY_REJECT_CONDITION_NONE
+        };
+
+        // Execute query request
+        let mut client = (*self.inner).clone();
+        let response = client
+            .query_workflow(request)
+            .await
+            .map_err(|e| format!("Query workflow failed: {}", e))?;
+
+        let inner_response = response.into_inner();
+
+        // Handle query rejection
+        if let Some(rejected) = inner_response.query_rejected {
+            return Ok(QueryResponse {
+                result: None,
+                query_rejected: Some(format!("Query rejected: {}", rejected.status)),
+            });
+        }
+
+        // Parse query result
+        let result = if let Some(query_result) = inner_response.query_result {
+            if let Some(first_payload) = query_result.payloads.first() {
+                // Deserialize JSON response
+                let json_value: serde_json::Value = serde_json::from_slice(&first_payload.data)
+                    .map_err(|e| format!("Failed to deserialize query result: {}", e))?;
+                Some(json_value)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok(QueryResponse {
+            result,
+            query_rejected: None,
         })
     }
 }

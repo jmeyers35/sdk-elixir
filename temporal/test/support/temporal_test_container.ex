@@ -309,11 +309,11 @@ defmodule Temporal.TestContainer do
   
   def server_config(ports) do
     %{
-      "target_url" => "http://localhost:#{ports.grpc_port}",
+      "target_url" => "localhost:#{ports.grpc_port}",
       "namespace" => "default"
     }
   end
   
-  def server_url(ports), do: "http://localhost:#{ports.grpc_port}"
+  def server_url(ports), do: "localhost:#{ports.grpc_port}"
   def ui_url(ports), do: "http://localhost:#{ports.ui_port}"
 end
