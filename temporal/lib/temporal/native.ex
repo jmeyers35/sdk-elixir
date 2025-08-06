@@ -3,6 +3,7 @@ defmodule Temporal.Native do
   Native interface module for Temporal NIFs.
   """
 
+  @behaviour Temporal.Native.Behaviour
   use Rustler, otp_app: :temporal, crate: "temporal_nif"
 
   # Client functions

@@ -1,0 +1,41 @@
+# Dynamic configuration for Temporal Server development
+# See https://docs.temporal.io/server/configuration for details
+
+# Frontend service config
+frontend.enableClientVersionCheck:
+  - value: false
+    constraints: {}
+
+# History service config  
+history.persistenceMaxQPS:
+  - value: 3000
+    constraints: {}
+
+# Matching service config
+matching.persistenceMaxQPS:
+  - value: 3000
+    constraints: {}
+
+# Worker service config
+worker.persistenceMaxQPS:
+  - value: 3000
+    constraints: {}
+
+# System workflow config
+system.enableEagerWorkflowStart:
+  - value: true
+    constraints: {}
+
+# Namespace config
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
+    constraints: {}
+
+# Development settings - disable some checks for easier local development
+frontend.disallowQuery:
+  - value: false
+    constraints: {}
+
+frontend.enableUpdateWorkflowExecution:
+  - value: true
+    constraints: {}
