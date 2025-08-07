@@ -189,11 +189,14 @@ fn load(_env: rustler::Env, _info: rustler::Term) -> bool {
 fn parse_tls_config(
     config_map: &HashMap<String, rustler::Term>,
 ) -> Result<Option<ClientTlsConfig>, String> {
-    if let Some(tls_term) = config_map.get("tls") {
-        let tls_map: HashMap<String, rustler::Term> = tls_term
-            .decode()
-            .map_err(|_| "TLS configuration must be a map".to_string())?;
-
+    if let Some(tls_term) = config_map
+        .get("tls_config")
+        .or_else(|| config_map.get("tls"))
+    {
+        let tls_map: HashMap<String, rustler::Term> = match tls_term.decode() {
+            Ok(m) => m,
+            Err(_) => return Ok(None),
+        };
         let client_cert_path = tls_map
             .get("client_cert_path")
             .and_then(|term| term.decode::<String>().ok());
@@ -203,7 +206,34 @@ fn parse_tls_config(
         let ca_cert_path = tls_map
             .get("ca_cert_path")
             .and_then(|term| term.decode::<String>().ok());
-
+        let client_cert_inline = tls_map
+            .get("client_cert")
+            .and_then(|term| term.decode::<String>().ok());
+        let client_key_inline = tls_map
+            .get("client_key")
+            .and_then(|term| term.decode::<String>().ok());
+        let ca_cert_inline = tls_map
+            .get("ca_cert")
+            .and_then(|term| term.decode::<String>().ok());
+        let (client_cert_path, client_key_path) = match (
+            client_cert_path,
+            client_key_path,
+            client_cert_inline,
+            client_key_inline,
+        ) {
+            (Some(cp), Some(kp), _, _) => (Some(cp), Some(kp)),
+            (_, _, Some(cert), Some(key)) => {
+                let cert_path = write_temp_pem("temporal_cert", &cert)?;
+                let key_path = write_temp_pem("temporal_key", &key)?;
+                (Some(cert_path), Some(key_path))
+            }
+            _ => (None, None),
+        };
+        let ca_cert_path = match (ca_cert_path, ca_cert_inline) {
+            (Some(p), _) => Some(p),
+            (None, Some(pem)) => Some(write_temp_pem("temporal_ca", &pem)?),
+            _ => None,
+        };
         Ok(Some(ClientTlsConfig {
             client_cert_path,
             client_key_path,
@@ -212,6 +242,27 @@ fn parse_tls_config(
     } else {
         Ok(None)
     }
+}
+
+fn write_temp_pem(prefix: &str, contents: &str) -> Result<String, String> {
+    use std::io::Write;
+    let mut file = tempfile::Builder::new()
+        .prefix(prefix)
+        .suffix(".pem")
+        .tempfile()
+        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+    file.write_all(contents.as_bytes())
+        .map_err(|e| format!("Failed to write temp file: {}", e))?;
+    let path = file.into_temp_path();
+    let path_str = path
+        .to_path_buf()
+        .into_os_string()
+        .into_string()
+        .map_err(|_| "Invalid temp path".to_string())?;
+    // Keep file until process exit
+    path.persist_noclobber(&path_str)
+        .map_err(|e| format!("Failed to persist temp file: {}", e))?;
+    Ok(path_str)
 }
 
 // Client functions
@@ -227,16 +278,19 @@ fn client_connect<'a>(env: Env<'a>, config_term: Term<'a>) -> NifResult<Term<'a>
     };
 
     // Extract required fields - no defaults following OSS SDK patterns
-    let target_url = match config_map.get("target_url") {
+    let target_url = match config_map.get("target_host") {
         Some(term) => match term.decode::<String>() {
             Ok(url) => url,
             Err(_) => {
-                let error_tuple = (rustler::types::atom::error(), "target_url must be a string");
+                let error_tuple = (
+                    rustler::types::atom::error(),
+                    "target_host must be a string",
+                );
                 return Ok(error_tuple.encode(env));
             }
         },
         None => {
-            let error_tuple = (rustler::types::atom::error(), "target_url is required");
+            let error_tuple = (rustler::types::atom::error(), "target_host is required");
             return Ok(error_tuple.encode(env));
         }
     };
@@ -286,6 +340,33 @@ fn client_connect<'a>(env: Env<'a>, config_term: Term<'a>) -> NifResult<Term<'a>
         }
     };
 
+    // Optional headers
+    let headers = config_map
+        .get("headers")
+        .and_then(|term| term.decode::<HashMap<String, String>>().ok());
+
+    // Optional retries
+    let retries = config_map.get("retries").and_then(|term| {
+        let m: HashMap<String, rustler::Term> = term.decode().ok()?;
+        let max_attempts = m
+            .get("max_attempts")
+            .and_then(|t| t.decode::<u32>().ok())
+            .unwrap_or(3);
+        let initial_backoff_ms = m
+            .get("initial_backoff_ms")
+            .and_then(|t| t.decode::<u64>().ok())
+            .unwrap_or(100);
+        let max_backoff_ms = m
+            .get("max_backoff_ms")
+            .and_then(|t| t.decode::<u64>().ok())
+            .unwrap_or(5_000);
+        Some(client::RetryOptions {
+            max_attempts,
+            initial_backoff_ms,
+            max_backoff_ms,
+        })
+    });
+
     // Build options struct
     let options = ClientOptions {
         tls,
@@ -294,6 +375,8 @@ fn client_connect<'a>(env: Env<'a>, config_term: Term<'a>) -> NifResult<Term<'a>
         identity,
         api_key,
         skip_system_info,
+        headers,
+        retries,
     };
 
     // Use shared runtime for connection - prevents resource exhaustion

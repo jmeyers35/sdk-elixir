@@ -31,5 +31,4 @@ defmodule Temporal.MixProject do
       {:ex_doc, "~> 0.31", only: :dev}
     ]
   end
-
 end

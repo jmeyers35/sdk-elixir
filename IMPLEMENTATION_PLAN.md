@@ -330,6 +330,37 @@ This document breaks down the requirements from SPEC.md into structured, actiona
 
 ---
 
+#### Task 2.2.3: Implement Payload Converter Configuration
+
+**Objective**: Add configurable payload conversion with composite converter chain for interop and determinism
+
+**Requirements**:
+- Provide client-level option to select payload converter chain (eg: [:json, :binary, :protobuf, {:custom, Module}])
+- Support per-call override in start/signal/query params
+- Encode metadata on Payloads (encoding, messageType, language="elixir") to match cross-SDK expectations
+- Support multi-argument inputs as a list of Payloads; decode query results via converter chain
+- Options for JSON depth/max, atom handling, and binary mode (base64/raw)
+
+**Implementation Notes**:
+- Define a Converter trait in Rust (to_payload/from_payload) and implementations: JsonConverter, BinaryConverter, ProtobufConverter; Custom via NIF callback not required initially
+- Build CompositeConverter from configured list; attempt to_payload in order; for from_payload select by metadata encoding
+- Expose Elixir config key `:payload_converter` on Temporal.Client.Config and pass through `client_connect`
+- Allow per-call override key `payload_converter` in params maps
+- Set default chain [:json] for MVP; document upgrade path
+
+**Acceptance Criteria**:
+- [ ] Inputs are converted to Payloads with correct metadata according to configured chain
+- [ ] Query responses decode back into Elixir terms using the chain
+- [ ] Per-call overrides take precedence over client defaults
+- [ ] Property tests for round-trip across primitives, nested maps, binaries
+- [ ] Cross-language compatibility verified by metadata parity with other SDKs
+
+**Dependencies**: Task 2.2.2
+
+**Complexity**: Medium - Serialization and interop
+
+---
+
 ## Phase 3: Worker Implementation
 
 ### Milestone 3.1: Basic Worker Infrastructure

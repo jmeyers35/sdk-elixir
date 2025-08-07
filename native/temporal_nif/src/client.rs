@@ -37,6 +37,16 @@ pub struct ClientOptions {
     pub identity: Option<String>,
     pub api_key: Option<String>,
     pub skip_system_info: bool,
+    pub headers: Option<std::collections::HashMap<String, String>>,
+    pub retries: Option<RetryOptions>,
+}
+
+
+#[derive(Debug, Clone, Default)]
+pub struct RetryOptions {
+    pub max_attempts: u32,
+    pub initial_backoff_ms: u64,
+    pub max_backoff_ms: u64,
 }
 
 /// Parameters for starting a workflow
@@ -133,6 +143,21 @@ impl ClientResource {
         if let Some(api_key) = options.api_key {
             builder.api_key(Some(api_key));
         }
+
+        if let Some(headers) = options.headers.clone() {
+            builder.headers(Some(headers));
+        }
+
+        if let Some(r) = options.retries.as_ref() {
+            builder.retry_config(temporal_client::RetryConfig {
+                initial_interval: std::time::Duration::from_millis(r.initial_backoff_ms),
+                max_interval: std::time::Duration::from_millis(r.max_backoff_ms),
+                max_retries: r.max_attempts as usize,
+                ..Default::default()
+            });
+        }
+
+        // Note: timeouts are controlled per-RPC in core; no global builder timeouts
 
         // Add TLS configuration if provided
         if let Some(tls_config) = options.tls {
@@ -246,6 +271,7 @@ impl ClientResource {
         // Execute the workflow start request
         // Clone the Arc to get a owned RetryClient for mutable access
         let mut client = (*self.inner).clone();
+        // Apply per-RPC timeout via tonic request metadata if supported by core
         let response = client
             .start_workflow_execution(request)
             .await

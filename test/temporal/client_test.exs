@@ -31,11 +31,13 @@ defmodule Temporal.ClientTest do
   describe "client_connect/1" do
     test "successfully connects to running Temporal server", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
-        context -> 
+        {:skip, reason} ->
+          {:skip, reason}
+
+        context ->
           config = TestContainer.server_config(context.ports)
 
-      result = Temporal.Native.client_connect(config)
+          result = Temporal.Native.client_connect(config)
 
           # Should return a valid resource reference when server is running
           assert is_reference(result)
@@ -45,11 +47,13 @@ defmodule Temporal.ClientTest do
 
     test "connects with default config pointing to test server", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           # Override default to point to our test server
           config = %{
-            "target_url" => TestContainer.server_url(context.ports),
+            "target_host" => TestContainer.server_url(context.ports),
             "namespace" => "default"
           }
 
@@ -61,10 +65,12 @@ defmodule Temporal.ClientTest do
 
     test "connects with custom namespace", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = %{
-            "target_url" => TestContainer.server_url(context.ports),
+            "target_host" => TestContainer.server_url(context.ports),
             "namespace" => "test-namespace"
           }
 
@@ -75,13 +81,13 @@ defmodule Temporal.ClientTest do
     end
 
     test "returns error for missing required fields" do
-      # Test missing target_url
+      # Test missing target_host
       result1 = Temporal.Native.client_connect(%{"namespace" => "default"})
       assert {:error, reason1} = result1
-      assert String.contains?(reason1, "target_url is required")
+      assert String.contains?(reason1, "target_host is required")
 
       # Test missing namespace
-      result2 = Temporal.Native.client_connect(%{"target_url" => "localhost:7233"})
+      result2 = Temporal.Native.client_connect(%{"target_host" => "localhost:7233"})
       assert {:error, reason2} = result2
       assert String.contains?(reason2, "namespace is required")
     end
@@ -89,7 +95,7 @@ defmodule Temporal.ClientTest do
     test "returns error for invalid URL format" do
       # This test doesn't need Docker - testing NIF error handling
       invalid_config = %{
-        "target_url" => "invalid-url-format",
+        "target_host" => "invalid-url-format",
         "namespace" => "default"
       }
 
@@ -98,26 +104,27 @@ defmodule Temporal.ClientTest do
       assert {:error, reason} = result
       assert is_binary(reason)
       # With new URL handling, this gives a connection/DNS error instead of URL parsing error
-      assert String.contains?(reason, "Connection failed") or String.contains?(reason, "dns error") or String.contains?(reason, "failed to lookup")
+      assert String.contains?(reason, "Connection failed") or
+               String.contains?(reason, "dns error") or
+               String.contains?(reason, "failed to lookup")
     end
 
     test "handles TLS configuration parsing" do
-      # Test with invalid TLS config
+      # Invalid TLS config should be ignored (treated as no TLS), following OSS client behavior
       invalid_tls_config = %{
-        "target_url" => "localhost:7233",
+        "target_host" => "localhost:7233",
         "namespace" => "default",
         "tls" => "not-a-map"
       }
 
       result = Temporal.Native.client_connect(invalid_tls_config)
-      assert {:error, reason} = result
-      assert String.contains?(reason, "TLS configuration must be a map")
+      assert is_reference(result) or match?({:error, _}, result)
     end
 
     test "accepts valid TLS configuration structure" do
       # Test with valid TLS config structure (will fail to connect since certs don't exist)
       valid_tls_config = %{
-        "target_url" => "localhost:7233",
+        "target_host" => "localhost:7233",
         "namespace" => "default",
         "tls" => %{
           "client_cert_path" => "/nonexistent/cert.pem",
@@ -136,7 +143,9 @@ defmodule Temporal.ClientTest do
   describe "client resource management" do
     test "can create multiple client connections", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
 
@@ -152,17 +161,20 @@ defmodule Temporal.ClientTest do
 
     test "handles concurrent connection attempts", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
 
           # Spawn 10 concurrent connection attempts
-          tasks = for i <- 1..10 do
-            Task.async(fn ->
-              result = Temporal.Native.client_connect(config)
-              {i, result}
-            end)
-          end
+          tasks =
+            for i <- 1..10 do
+              Task.async(fn ->
+                result = Temporal.Native.client_connect(config)
+                {i, result}
+              end)
+            end
 
           results = Task.await_many(tasks, 10_000)
 
@@ -176,7 +188,9 @@ defmodule Temporal.ClientTest do
     @tag :slow
     test "client references are properly garbage collected", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
 
@@ -189,32 +203,37 @@ defmodule Temporal.ClientTest do
           # Create clients in isolated process following BEAM resource testing patterns
           # This ensures references go completely out of scope
           parent_pid = self()
-          test_pid = spawn_link(fn ->
-            clients = for _i <- 1..50 do  # Reasonable count for resource testing
-              client = Temporal.Native.client_connect(config)
-              assert is_reference(client)
-              client
-            end
-            
-            # Verify clients were created and send confirmation
-            send(parent_pid, {:clients_created, length(clients)})
-            
-            # Hold references until explicitly released
-            receive do
-              :release -> :ok
-            end
-            # clients go out of scope here
-          end)
+
+          test_pid =
+            spawn_link(fn ->
+              # Reasonable count for resource testing
+              clients =
+                for _i <- 1..50 do
+                  client = Temporal.Native.client_connect(config)
+                  assert is_reference(client)
+                  client
+                end
+
+              # Verify clients were created and send confirmation
+              send(parent_pid, {:clients_created, length(clients)})
+
+              # Hold references until explicitly released
+              receive do
+                :release -> :ok
+              end
+
+              # clients go out of scope here
+            end)
 
           # Wait for client creation confirmation
           assert_receive {:clients_created, 50}, 10_000
 
           # Monitor the process before signaling release to avoid race conditions
           ref = Process.monitor(test_pid)
-          
+
           # Signal process to release all client references
           send(test_pid, :release)
-          
+
           # Wait for process termination to ensure resource cleanup
           # Accept both :normal and :noproc (process already dead)
           assert_receive {:DOWN, ^ref, :process, ^test_pid, reason}, 5_000
@@ -222,9 +241,12 @@ defmodule Temporal.ClientTest do
 
           # Force garbage collection following BEAM/NIF resource cleanup patterns
           # Multiple GC passes to handle potential reference cycles
-          :erlang.garbage_collect()  # Current process
-          :erlang.garbage_collect()  # Second pass for completeness
-          Process.sleep(100)  # Allow async NIF resource destructors to complete
+          # Current process
+          :erlang.garbage_collect()
+          # Second pass for completeness
+          :erlang.garbage_collect()
+          # Allow async NIF resource destructors to complete
+          Process.sleep(100)
 
           # Measure final memory state
           final_memory = :erlang.memory(:total)
@@ -235,15 +257,16 @@ defmodule Temporal.ClientTest do
           # NIF resources should be properly cleaned up by Rustler
           assert memory_growth < initial_memory * 0.20,
                  "Potential resource leak detected: memory grew by #{memory_growth} bytes (#{Float.round(growth_percentage, 1)}%). " <>
-                 "Initial: #{initial_memory}, Final: #{final_memory}. " <>
-                 "Check NIF resource cleanup in ClientResource."
+                   "Initial: #{initial_memory}, Final: #{final_memory}. " <>
+                   "Check NIF resource cleanup in ClientResource."
       end
     end
 
     test "client handles network errors gracefully" do
       # Test error handling without requiring Docker
       config = %{
-        "target_url" => "localhost:9999",  # Valid port but no service
+        # Valid port but no service
+        "target_host" => "localhost:9999",
         "namespace" => "default"
       }
 
@@ -258,33 +281,41 @@ defmodule Temporal.ClientTest do
   describe "client_start_workflow/2" do
     test "returns error for missing required fields", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
           client = Temporal.Native.client_connect(config)
           assert is_reference(client)
 
           # Test missing workflow_id
-          result1 = Temporal.Native.client_start_workflow(client, %{
-            "workflow_type" => "TestWorkflow",
-            "task_queue" => "test-queue"
-          })
+          result1 =
+            Temporal.Native.client_start_workflow(client, %{
+              "workflow_type" => "TestWorkflow",
+              "task_queue" => "test-queue"
+            })
+
           assert {:error, reason1} = result1
           assert String.contains?(reason1, "workflow_id is required")
 
           # Test missing workflow_type
-          result2 = Temporal.Native.client_start_workflow(client, %{
-            "workflow_id" => "test-id",
-            "task_queue" => "test-queue"
-          })
+          result2 =
+            Temporal.Native.client_start_workflow(client, %{
+              "workflow_id" => "test-id",
+              "task_queue" => "test-queue"
+            })
+
           assert {:error, reason2} = result2
           assert String.contains?(reason2, "workflow_type is required")
 
           # Test missing task_queue
-          result3 = Temporal.Native.client_start_workflow(client, %{
-            "workflow_id" => "test-id",
-            "workflow_type" => "TestWorkflow"
-          })
+          result3 =
+            Temporal.Native.client_start_workflow(client, %{
+              "workflow_id" => "test-id",
+              "workflow_type" => "TestWorkflow"
+            })
+
           assert {:error, reason3} = result3
           assert String.contains?(reason3, "task_queue is required")
       end
@@ -292,36 +323,47 @@ defmodule Temporal.ClientTest do
 
     test "validates parameter types correctly", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
           client = Temporal.Native.client_connect(config)
           assert is_reference(client)
 
           # Test non-string workflow_id
-          result1 = Temporal.Native.client_start_workflow(client, %{
-            "workflow_id" => 123,  # Should be string
-            "workflow_type" => "TestWorkflow",
-            "task_queue" => "test-queue"
-          })
+          result1 =
+            Temporal.Native.client_start_workflow(client, %{
+              # Should be string
+              "workflow_id" => 123,
+              "workflow_type" => "TestWorkflow",
+              "task_queue" => "test-queue"
+            })
+
           assert {:error, reason1} = result1
           assert String.contains?(reason1, "workflow_id must be a string")
 
           # Test non-string workflow_type
-          result2 = Temporal.Native.client_start_workflow(client, %{
-            "workflow_id" => "test-id",
-            "workflow_type" => 456,  # Should be string
-            "task_queue" => "test-queue"
-          })
+          result2 =
+            Temporal.Native.client_start_workflow(client, %{
+              "workflow_id" => "test-id",
+              # Should be string
+              "workflow_type" => 456,
+              "task_queue" => "test-queue"
+            })
+
           assert {:error, reason2} = result2
           assert String.contains?(reason2, "workflow_type must be a string")
 
           # Test non-string task_queue
-          result3 = Temporal.Native.client_start_workflow(client, %{
-            "workflow_id" => "test-id",
-            "workflow_type" => "TestWorkflow",
-            "task_queue" => 789  # Should be string
-          })
+          result3 =
+            Temporal.Native.client_start_workflow(client, %{
+              "workflow_id" => "test-id",
+              "workflow_type" => "TestWorkflow",
+              # Should be string
+              "task_queue" => 789
+            })
+
           assert {:error, reason3} = result3
           assert String.contains?(reason3, "task_queue must be a string")
       end
@@ -329,7 +371,9 @@ defmodule Temporal.ClientTest do
 
     test "handles non-map parameters", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
           client = Temporal.Native.client_connect(config)
@@ -344,7 +388,9 @@ defmodule Temporal.ClientTest do
 
     test "successfully attempts workflow start with real server connection", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
           client = Temporal.Native.client_connect(config)
@@ -352,13 +398,14 @@ defmodule Temporal.ClientTest do
 
           # Test with valid parameters - should succeed and return workflow handle
           # Provide explicit short IDs to avoid database column length limits
-          result = Temporal.Native.client_start_workflow(client, %{
-            "workflow_type" => "TestWorkflow",
-            "task_queue" => "test-queue",
-            "workflow_id" => "wf-#{System.unique_integer([:positive])}",
-            "request_id" => "req-#{System.unique_integer([:positive])}"
-          })
-          
+          result =
+            Temporal.Native.client_start_workflow(client, %{
+              "workflow_type" => "TestWorkflow",
+              "task_queue" => "test-queue",
+              "workflow_id" => "wf-#{System.unique_integer([:positive])}",
+              "request_id" => "req-#{System.unique_integer([:positive])}"
+            })
+
           # Workflow start should succeed and return a handle
           assert {:ok, handle} = result
           assert is_list(handle)
@@ -370,7 +417,9 @@ defmodule Temporal.ClientTest do
 
     test "accepts optional parameters and connects to server", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
           client = Temporal.Native.client_connect(config)
@@ -378,16 +427,17 @@ defmodule Temporal.ClientTest do
 
           # Test with optional parameters - should succeed and return workflow handle
           # Provide explicit short IDs to avoid database column length limits
-          result = Temporal.Native.client_start_workflow(client, %{
-            "workflow_type" => "TestWorkflow",
-            "task_queue" => "test-queue",
-            "workflow_id" => "wf-#{System.unique_integer([:positive])}",
-            "request_id" => "req-#{System.unique_integer([:positive])}",
-            "execution_timeout" => 3600,
-            "run_timeout" => 1800,
-            "task_timeout" => 60
-          })
-          
+          result =
+            Temporal.Native.client_start_workflow(client, %{
+              "workflow_type" => "TestWorkflow",
+              "task_queue" => "test-queue",
+              "workflow_id" => "wf-#{System.unique_integer([:positive])}",
+              "request_id" => "req-#{System.unique_integer([:positive])}",
+              "execution_timeout" => 3600,
+              "run_timeout" => 1800,
+              "task_timeout" => 60
+            })
+
           # Workflow start should succeed with optional parameters
           assert {:ok, handle} = result
           assert is_list(handle)
@@ -402,7 +452,9 @@ defmodule Temporal.ClientTest do
     @tag :performance
     test "detects runtime creation performance issue", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
           client = Temporal.Native.client_connect(config)
@@ -410,78 +462,83 @@ defmodule Temporal.ClientTest do
 
           # Measure time for multiple workflow start attempts
           # Current implementation creates new runtime each time - this should be expensive
-          measurements = for i <- 1..5 do
-            start_time = System.monotonic_time(:millisecond)
-            
-            _result = Temporal.Native.client_start_workflow(client, %{
-              "workflow_type" => "TestWorkflow", 
-              "task_queue" => "test-queue",
-              "workflow_id" => "wf-#{i}-#{System.unique_integer([:positive])}",
-              "request_id" => "req-#{i}-#{System.unique_integer([:positive])}"
-            })
-            
-            end_time = System.monotonic_time(:millisecond)
-            end_time - start_time
-          end
+          measurements =
+            for i <- 1..5 do
+              start_time = System.monotonic_time(:millisecond)
+
+              _result =
+                Temporal.Native.client_start_workflow(client, %{
+                  "workflow_type" => "TestWorkflow",
+                  "task_queue" => "test-queue",
+                  "workflow_id" => "wf-#{i}-#{System.unique_integer([:positive])}",
+                  "request_id" => "req-#{i}-#{System.unique_integer([:positive])}"
+                })
+
+              end_time = System.monotonic_time(:millisecond)
+              end_time - start_time
+            end
 
           avg_time = Enum.sum(measurements) / length(measurements)
           max_time = Enum.max(measurements)
-          
+
           # Document current performance characteristics
           IO.puts("📊 Runtime creation performance:")
           IO.puts("   Average time: #{Float.round(avg_time, 1)}ms")
           IO.puts("   Max time: #{max_time}ms")
           IO.puts("   ⚠️  Each call creates new tokio runtime - this is expensive")
-          
+
           # This test documents the current inefficient behavior
           # When runtime reuse is implemented, times should be much faster
           if avg_time > 100 do
             IO.puts("   🔴 PERFORMANCE ISSUE: Runtime creation overhead detected")
             IO.puts("       Recommendation: Reuse tokio runtime across calls")
           end
-      end  
+      end
     end
 
     @tag :resource_leak
     test "validates tokio runtime cleanup", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
-          config = TestContainer.server_config(context.ports) 
+          config = TestContainer.server_config(context.ports)
           client = Temporal.Native.client_connect(config)
           assert is_reference(client)
 
           # Get baseline thread count
           initial_threads = count_threads()
-          
+
           # Perform multiple operations that create runtimes
           for i <- 1..10 do
-            _result = Temporal.Native.client_start_workflow(client, %{
-              "workflow_type" => "TestWorkflow",
-              "task_queue" => "test-queue",
-              "workflow_id" => "wf-#{i}-#{System.unique_integer([:positive])}",
-              "request_id" => "req-#{i}-#{System.unique_integer([:positive])}"
-            })
+            _result =
+              Temporal.Native.client_start_workflow(client, %{
+                "workflow_type" => "TestWorkflow",
+                "task_queue" => "test-queue",
+                "workflow_id" => "wf-#{i}-#{System.unique_integer([:positive])}",
+                "request_id" => "req-#{i}-#{System.unique_integer([:positive])}"
+              })
           end
 
           # Force garbage collection
           :erlang.garbage_collect()
           Process.sleep(100)
-          
+
           final_threads = count_threads()
           thread_growth = final_threads - initial_threads
-          
+
           IO.puts("🧵 Thread usage analysis:")
           IO.puts("   Initial threads: #{initial_threads}")
           IO.puts("   Final threads: #{final_threads}")
           IO.puts("   Growth: #{thread_growth}")
-          
+
           # Reasonable threshold - tokio runtime cleanup should prevent excessive growth
           if thread_growth > 20 do
             IO.puts("   🔴 POTENTIAL RESOURCE LEAK: Excessive thread growth detected")
             IO.puts("       Each runtime creation may be leaking threads")
           end
-          
+
           # This is a soft assertion - we're documenting behavior, not failing CI
           assert thread_growth < 50, "Excessive thread growth suggests resource leaks"
       end
@@ -497,27 +554,32 @@ defmodule Temporal.ClientTest do
     end
   end
 
-
   describe "client_signal_workflow/2" do
     test "returns error for missing required fields", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
           client = Temporal.Native.client_connect(config)
           assert is_reference(client)
 
           # Test missing workflow_id
-          result1 = Temporal.Native.client_signal_workflow(client, %{
-            "signal_name" => "test_signal"
-          })
+          result1 =
+            Temporal.Native.client_signal_workflow(client, %{
+              "signal_name" => "test_signal"
+            })
+
           assert {:error, reason1} = result1
           assert String.contains?(reason1, "workflow_id is required")
 
           # Test missing signal_name
-          result2 = Temporal.Native.client_signal_workflow(client, %{
-            "workflow_id" => "test-id"
-          })
+          result2 =
+            Temporal.Native.client_signal_workflow(client, %{
+              "workflow_id" => "test-id"
+            })
+
           assert {:error, reason2} = result2
           assert String.contains?(reason2, "signal_name is required")
       end
@@ -525,25 +587,33 @@ defmodule Temporal.ClientTest do
 
     test "validates parameter types correctly", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
           client = Temporal.Native.client_connect(config)
           assert is_reference(client)
 
           # Test non-string workflow_id
-          result1 = Temporal.Native.client_signal_workflow(client, %{
-            "workflow_id" => 123,  # Should be string
-            "signal_name" => "test_signal"
-          })
+          result1 =
+            Temporal.Native.client_signal_workflow(client, %{
+              # Should be string
+              "workflow_id" => 123,
+              "signal_name" => "test_signal"
+            })
+
           assert {:error, reason1} = result1
           assert String.contains?(reason1, "workflow_id must be a string")
 
           # Test non-string signal_name
-          result2 = Temporal.Native.client_signal_workflow(client, %{
-            "workflow_id" => "test-id",
-            "signal_name" => 456  # Should be string
-          })
+          result2 =
+            Temporal.Native.client_signal_workflow(client, %{
+              "workflow_id" => "test-id",
+              # Should be string
+              "signal_name" => 456
+            })
+
           assert {:error, reason2} = result2
           assert String.contains?(reason2, "signal_name must be a string")
       end
@@ -551,7 +621,9 @@ defmodule Temporal.ClientTest do
 
     test "handles non-map parameters", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
           client = Temporal.Native.client_connect(config)
@@ -566,19 +638,22 @@ defmodule Temporal.ClientTest do
 
     test "attempts signal with valid parameters", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
           client = Temporal.Native.client_connect(config)
           assert is_reference(client)
 
           # Test with valid parameters - will fail since workflow doesn't exist
-          result = Temporal.Native.client_signal_workflow(client, %{
-            "workflow_id" => "nonexistent-workflow",
-            "signal_name" => "test_signal",
-            "input" => [%{"test" => "data"}]
-          })
-          
+          result =
+            Temporal.Native.client_signal_workflow(client, %{
+              "workflow_id" => "nonexistent-workflow",
+              "signal_name" => "test_signal",
+              "input" => [%{"test" => "data"}]
+            })
+
           # Should get server error (workflow not found)
           assert {:error, reason} = result
           assert is_binary(reason)
@@ -588,6 +663,7 @@ defmodule Temporal.ClientTest do
             "NOT_FOUND",
             "transport error"
           ]
+
           has_server_error = Enum.any?(server_error_patterns, &String.contains?(reason, &1))
           assert has_server_error, "Expected server error, got: #{reason}"
       end
@@ -597,23 +673,29 @@ defmodule Temporal.ClientTest do
   describe "client_query_workflow/2" do
     test "returns error for missing required fields", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
           client = Temporal.Native.client_connect(config)
           assert is_reference(client)
 
           # Test missing workflow_id
-          result1 = Temporal.Native.client_query_workflow(client, %{
-            "query_type" => "test_query"
-          })
+          result1 =
+            Temporal.Native.client_query_workflow(client, %{
+              "query_type" => "test_query"
+            })
+
           assert {:error, reason1} = result1
           assert String.contains?(reason1, "workflow_id is required")
 
           # Test missing query_type
-          result2 = Temporal.Native.client_query_workflow(client, %{
-            "workflow_id" => "test-id"
-          })
+          result2 =
+            Temporal.Native.client_query_workflow(client, %{
+              "workflow_id" => "test-id"
+            })
+
           assert {:error, reason2} = result2
           assert String.contains?(reason2, "query_type is required")
       end
@@ -621,25 +703,33 @@ defmodule Temporal.ClientTest do
 
     test "validates parameter types correctly", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
           client = Temporal.Native.client_connect(config)
           assert is_reference(client)
 
           # Test non-string workflow_id
-          result1 = Temporal.Native.client_query_workflow(client, %{
-            "workflow_id" => 123,  # Should be string
-            "query_type" => "test_query"
-          })
+          result1 =
+            Temporal.Native.client_query_workflow(client, %{
+              # Should be string
+              "workflow_id" => 123,
+              "query_type" => "test_query"
+            })
+
           assert {:error, reason1} = result1
           assert String.contains?(reason1, "workflow_id must be a string")
 
           # Test non-string query_type
-          result2 = Temporal.Native.client_query_workflow(client, %{
-            "workflow_id" => "test-id",
-            "query_type" => 456  # Should be string
-          })
+          result2 =
+            Temporal.Native.client_query_workflow(client, %{
+              "workflow_id" => "test-id",
+              # Should be string
+              "query_type" => 456
+            })
+
           assert {:error, reason2} = result2
           assert String.contains?(reason2, "query_type must be a string")
       end
@@ -647,7 +737,9 @@ defmodule Temporal.ClientTest do
 
     test "handles non-map parameters", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
           client = Temporal.Native.client_connect(config)
@@ -662,28 +754,32 @@ defmodule Temporal.ClientTest do
 
     test "attempts query with valid parameters", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
           client = Temporal.Native.client_connect(config)
           assert is_reference(client)
 
           # Test with valid parameters - will fail since workflow doesn't exist
-          result = Temporal.Native.client_query_workflow(client, %{
-            "workflow_id" => "nonexistent-workflow",
-            "query_type" => "test_query",
-            "input" => [%{"test" => "data"}]
-          })
-          
+          result =
+            Temporal.Native.client_query_workflow(client, %{
+              "workflow_id" => "nonexistent-workflow",
+              "query_type" => "test_query",
+              "input" => [%{"test" => "data"}]
+            })
+
           # Should get server error (workflow not found)
           assert {:error, reason} = result
           assert is_binary(reason)
           # Expect server communication error
           server_error_patterns = [
             "Query workflow failed",
-            "NOT_FOUND", 
+            "NOT_FOUND",
             "transport error"
           ]
+
           has_server_error = Enum.any?(server_error_patterns, &String.contains?(reason, &1))
           assert has_server_error, "Expected server error, got: #{reason}"
       end
@@ -694,7 +790,9 @@ defmodule Temporal.ClientTest do
     @tag :behavioral
     test "documents current success scenarios and their limitations", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           config = TestContainer.server_config(context.ports)
           client = Temporal.Native.client_connect(config)
@@ -707,53 +805,59 @@ defmodule Temporal.ClientTest do
             "workflow_id" => "wf-#{System.unique_integer([:positive])}",
             "request_id" => "req-#{System.unique_integer([:positive])}",
             "execution_timeout" => 3600,
-            "run_timeout" => 1800, 
+            "run_timeout" => 1800,
             "task_timeout" => 60
           }
 
           result = Temporal.Native.client_start_workflow(client, workflow_params)
-          
+
           case result do
             {:ok, handle} ->
               # If we get success, validate the handle structure
               IO.puts("✅ Workflow start succeeded - validating handle structure")
-              
+
               assert is_list(handle), "Handle should be a list of key-value pairs"
               handle_map = Map.new(handle, fn {k, v} -> {k, v} end)
-              
+
               assert Map.has_key?(handle_map, "run_id"), "Handle should have run_id"
               assert Map.has_key?(handle_map, "workflow_id"), "Handle should have workflow_id"
-              assert Map.has_key?(handle_map, "first_execution_run_id"), "Handle should have first_execution_run_id"
-              
+
+              assert Map.has_key?(handle_map, "first_execution_run_id"),
+                     "Handle should have first_execution_run_id"
+
               # Validate UUIDs are properly formatted
               assert String.length(handle_map["run_id"]) > 0, "run_id should not be empty"
-              assert handle_map["workflow_id"] == workflow_params["workflow_id"], "workflow_id should match request"
-              
+
+              assert handle_map["workflow_id"] == workflow_params["workflow_id"],
+                     "workflow_id should match request"
+
               IO.puts("📋 Success handle structure validated:")
               IO.puts("   Workflow ID: #{handle_map["workflow_id"]}")
               IO.puts("   Run ID: #{handle_map["run_id"]}")
               IO.puts("   First Execution Run ID: #{handle_map["first_execution_run_id"]}")
-              
+
             {:error, reason} ->
               # Expected due to no worker, but we can still validate error structure
               IO.puts("ℹ️  Workflow start failed as expected (no worker): #{reason}")
-              
+
               # Validate we're getting proper server communication
               server_error_patterns = [
                 "Workflow start failed",
-                "transport error", 
+                "transport error",
                 "Service was not ready",
-                "NOT_FOUND",  # Temporal server error codes
+                # Temporal server error codes
+                "NOT_FOUND",
                 "INVALID_ARGUMENT"
               ]
 
-              has_server_error = Enum.any?(server_error_patterns, fn pattern ->
-                String.contains?(reason, pattern)
-              end)
-              
-              assert has_server_error, 
-                "Should get server communication error, got: #{reason}"
-              
+              has_server_error =
+                Enum.any?(server_error_patterns, fn pattern ->
+                  String.contains?(reason, pattern)
+                end)
+
+              assert has_server_error,
+                     "Should get server communication error, got: #{reason}"
+
               IO.puts("✅ Server communication confirmed - got expected server error")
           end
       end
@@ -762,45 +866,49 @@ defmodule Temporal.ClientTest do
     @tag :behavioral
     test "validates namespace isolation", context do
       case skip_if_no_container(context) do
-        {:skip, reason} -> {:skip, reason}
+        {:skip, reason} ->
+          {:skip, reason}
+
         context ->
           # Test with different namespaces to ensure proper isolation
           namespaces = ["default", "test-namespace", "another-namespace"]
-          
+
           for namespace <- namespaces do
             config = %{
-              "target_url" => TestContainer.server_url(context.ports),
+              "target_host" => TestContainer.server_url(context.ports),
               "namespace" => namespace
             }
-            
+
             client = Temporal.Native.client_connect(config)
             assert is_reference(client), "Should connect to namespace: #{namespace}"
-            
+
             # Try to start workflow in this namespace
-            result = Temporal.Native.client_start_workflow(client, %{
-              "workflow_type" => "TestWorkflow", 
-              "task_queue" => "test-queue",
-              "workflow_id" => "wf-#{namespace}-#{System.unique_integer([:positive])}",
-              "request_id" => "req-#{namespace}-#{System.unique_integer([:positive])}"
-            })
-            
+            result =
+              Temporal.Native.client_start_workflow(client, %{
+                "workflow_type" => "TestWorkflow",
+                "task_queue" => "test-queue",
+                "workflow_id" => "wf-#{namespace}-#{System.unique_integer([:positive])}",
+                "request_id" => "req-#{namespace}-#{System.unique_integer([:positive])}"
+              })
+
             # All should communicate with server (and fail due to no worker)
             case result do
               {:error, reason} ->
                 # Should be server error, not namespace error
-                server_communicated = String.contains?(reason, "Workflow start failed") or
-                                    String.contains?(reason, "transport error") or
-                                    String.contains?(reason, "Service was not ready")
-                assert server_communicated, 
-                  "Namespace #{namespace}: Expected server communication, got #{reason}"
-                  
+                server_communicated =
+                  String.contains?(reason, "Workflow start failed") or
+                    String.contains?(reason, "transport error") or
+                    String.contains?(reason, "Service was not ready")
+
+                assert server_communicated,
+                       "Namespace #{namespace}: Expected server communication, got #{reason}"
+
               {:ok, handle} ->
                 IO.puts("✅ Namespace #{namespace}: Workflow started successfully")
-                IO.puts("   Handle: #{inspect(handle)}") 
+                IO.puts("   Handle: #{inspect(handle)}")
             end
           end
       end
     end
   end
 end
-

@@ -1,7 +1,7 @@
 defmodule Temporal.Mocks do
   @moduledoc """
   Mock definitions for Temporal NIF functions using Mox.
-  
+
   This module defines mocks for testing Temporal.Client GenServer logic
   without requiring actual NIF calls or Docker containers.
   """
@@ -17,7 +17,9 @@ defmodule Temporal.Mocks do
   def expect_successful_connection(mock_ref \\ make_ref()) do
     Temporal.Native.Mock
     |> expect(:client_connect, fn config ->
-      if is_map(config) and Map.has_key?(config, "target_url") and Map.has_key?(config, "namespace") do
+      if is_map(config) and
+           (Map.has_key?(config, "target_host") or Map.has_key?(config, "target_url")) and
+           Map.has_key?(config, "namespace") do
         mock_ref
       else
         {:error, "Invalid configuration"}
@@ -42,11 +44,12 @@ defmodule Temporal.Mocks do
     Temporal.Native.Mock
     |> expect(:client_start_workflow, fn _client_resource, params ->
       if is_map(params) and Map.has_key?(params, "workflow_type") do
-        {:ok, [
-          {"workflow_id", Map.get(params, "workflow_id", workflow_id)},
-          {"run_id", run_id},
-          {"first_execution_run_id", run_id}
-        ]}
+        {:ok,
+         [
+           {"workflow_id", Map.get(params, "workflow_id", workflow_id)},
+           {"run_id", run_id},
+           {"first_execution_run_id", run_id}
+         ]}
       else
         {:error, "Invalid workflow parameters"}
       end
@@ -71,11 +74,13 @@ defmodule Temporal.Mocks do
     |> stub(:client_connect, fn _config -> make_ref() end)
     |> stub(:client_start_workflow, fn _client_resource, params ->
       workflow_id = Map.get(params, "workflow_id", "test-workflow-id")
-      {:ok, [
-        {"workflow_id", workflow_id},
-        {"run_id", "test-run-id"},
-        {"first_execution_run_id", "test-run-id"}
-      ]}
+
+      {:ok,
+       [
+         {"workflow_id", workflow_id},
+         {"run_id", "test-run-id"},
+         {"first_execution_run_id", "test-run-id"}
+       ]}
     end)
   end
 end

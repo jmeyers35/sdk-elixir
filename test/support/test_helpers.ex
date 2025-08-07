@@ -7,21 +7,21 @@ defmodule Temporal.TestHelpers do
 
   @doc """
   Waits for a condition to become true within a timeout.
-  
+
   Useful for replacing sleep-based synchronization in tests.
   """
   def wait_until(condition_fn, timeout \\ 5000, check_interval \\ 50) do
     deadline = System.monotonic_time(:millisecond) + timeout
-    
+
     do_wait_until(condition_fn, deadline, check_interval)
   end
-  
+
   defp do_wait_until(condition_fn, deadline, check_interval) do
     if condition_fn.() do
       :ok
     else
       now = System.monotonic_time(:millisecond)
-      
+
       if now >= deadline do
         flunk("Condition did not become true within timeout")
       else
@@ -54,20 +54,20 @@ defmodule Temporal.TestHelpers do
       task_queue: unique_task_queue(),
       workflow_id: unique_workflow_id()
     }
-    
+
     Map.merge(defaults, overrides)
   end
 
   @doc """
   Asserts that an error message contains expected content.
-  
+
   More specific than just checking if it's a binary.
   """
   def assert_error_contains({:error, reason}, expected) when is_binary(reason) do
     assert reason =~ expected,
-      "Expected error to contain '#{expected}', but got: #{reason}"
+           "Expected error to contain '#{expected}', but got: #{reason}"
   end
-  
+
   def assert_error_contains(other, _expected) do
     flunk("Expected {:error, reason}, but got: #{inspect(other)}")
   end
@@ -78,17 +78,17 @@ defmodule Temporal.TestHelpers do
   defmacro with_supervised_client(opts, do: block) do
     quote do
       opts = unquote(opts)
-      
+
       # Ensure unique name if not provided
-      opts = 
+      opts =
         if Keyword.has_key?(opts, :name) do
           opts
         else
           Keyword.put(opts, :name, :"test_client_#{System.unique_integer([:positive])}")
         end
-      
+
       {:ok, client} = start_supervised({Temporal.Client, opts})
-      
+
       try do
         var!(client) = client
         unquote(block)
@@ -104,9 +104,9 @@ defmodule Temporal.TestHelpers do
   def capture_telemetry(event_names) when is_list(event_names) do
     test_pid = self()
     ref = make_ref()
-    
+
     handler_id = "test-handler-#{System.unique_integer([:positive])}"
-    
+
     :telemetry.attach_many(
       handler_id,
       event_names,
@@ -115,10 +115,10 @@ defmodule Temporal.TestHelpers do
       end,
       nil
     )
-    
+
     {ref, handler_id}
   end
-  
+
   @doc """
   Waits for a telemetry event and returns it.
   """
@@ -131,7 +131,7 @@ defmodule Temporal.TestHelpers do
         flunk("Did not receive telemetry event #{inspect(event_name)} within #{timeout}ms")
     end
   end
-  
+
   @doc """
   Cleans up telemetry handler after test.
   """
@@ -148,7 +148,7 @@ defmodule Temporal.TestHelpers do
     assert Map.has_key?(state, :client_resource)
     assert Map.has_key?(state, :status)
     assert Map.has_key?(state, :connect_attempts)
-    
+
     assert is_map(state.config)
     assert state.status in [:disconnected, :connecting, :connected, :error]
     assert is_integer(state.connect_attempts) and state.connect_attempts >= 0
@@ -166,8 +166,9 @@ defmodule Temporal.TestHelpers do
   """
   def assert_linked(process1, process2) do
     {:links, links} = Process.info(process1, :links)
+
     assert process2 in links,
-      "Expected #{inspect(process1)} to be linked to #{inspect(process2)}"
+           "Expected #{inspect(process1)} to be linked to #{inspect(process2)}"
   end
 
   @doc """
@@ -175,10 +176,10 @@ defmodule Temporal.TestHelpers do
   """
   def test_client_config(overrides \\ %{}) do
     defaults = %{
-      "target_url" => "localhost:7233",
+      "target_host" => "localhost:7233",
       "namespace" => "test-namespace"
     }
-    
+
     Map.merge(defaults, overrides)
   end
 end
