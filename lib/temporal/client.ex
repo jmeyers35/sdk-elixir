@@ -424,7 +424,9 @@ defmodule Temporal.Client do
       "identity" => cfg.identity,
       "headers" => cfg.headers,
       "tls_config" => cfg.tls,
-      "retries" => cfg.retries
+      "retries" => cfg.retries,
+      "payload_converter" => cfg.payload_converter,
+      "payload_converter_options" => cfg.payload_converter_options
     }
   end
 
@@ -474,7 +476,13 @@ defmodule Temporal.Client do
       {:execution_timeout, v} -> {"execution_timeout", v}
       {:run_timeout, v} -> {"run_timeout", v}
       {:task_timeout, v} -> {"task_timeout", v}
-      {:input, v} -> {"input", List.wrap(v)}
+      {:input, v} -> 
+        # Convert input data to payloads at the Elixir layer
+        input_list = List.wrap(v)
+        case Temporal.PayloadConverter.to_payloads(input_list) do
+          {:ok, payloads} -> {"input", payloads}
+          {:error, _reason} -> {"input", []}
+        end
       {k, v} when is_atom(k) -> {Atom.to_string(k), v}
       {k, v} when is_binary(k) -> {k, v}
     end)
@@ -488,7 +496,13 @@ defmodule Temporal.Client do
       {:run_id, v} -> {"run_id", to_string(v)}
       {:signal_name, v} -> {"signal_name", to_string(v)}
       {:namespace, v} -> {"namespace", to_string(v)}
-      {:input, v} -> {"input", List.wrap(v)}
+      {:input, v} -> 
+        # Convert input data to payloads at the Elixir layer
+        input_list = List.wrap(v)
+        case Temporal.PayloadConverter.to_payloads(input_list) do
+          {:ok, payloads} -> {"input", payloads}
+          {:error, _reason} -> {"input", []}
+        end
       {k, v} when is_atom(k) -> {Atom.to_string(k), v}
       {k, v} when is_binary(k) -> {k, v}
     end)
@@ -502,7 +516,13 @@ defmodule Temporal.Client do
       {:run_id, v} -> {"run_id", to_string(v)}
       {:query_type, v} -> {"query_type", to_string(v)}
       {:namespace, v} -> {"namespace", to_string(v)}
-      {:input, v} -> {"input", List.wrap(v)}
+      {:input, v} -> 
+        # Convert input data to payloads at the Elixir layer
+        input_list = List.wrap(v)
+        case Temporal.PayloadConverter.to_payloads(input_list) do
+          {:ok, payloads} -> {"input", payloads}
+          {:error, _reason} -> {"input", []}
+        end
       {k, v} when is_atom(k) -> {Atom.to_string(k), v}
       {k, v} when is_binary(k) -> {k, v}
     end)

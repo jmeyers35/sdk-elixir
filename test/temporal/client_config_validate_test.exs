@@ -17,14 +17,22 @@ defmodule Temporal.ClientConfigValidateTest do
   end
 
   test "normalizes strings and downcases namespace" do
-    {:ok, cfg} = Config.validate(%Config{host: " host ", namespace: " DEFAULT ", task_queue: " tq "})
+    {:ok, cfg} =
+      Config.validate(%Config{host: " host ", namespace: " DEFAULT ", task_queue: " tq "})
+
     assert cfg.host == "host"
     assert cfg.namespace == "default"
     assert cfg.task_queue == "tq"
   end
 
   test "retries must be non-negative" do
-    bad = %Config{host: "h", namespace: "n", task_queue: "q", retries: %{max_attempts: -1, initial_backoff_ms: -10, max_backoff_ms: -5}}
+    bad = %Config{
+      host: "h",
+      namespace: "n",
+      task_queue: "q",
+      retries: %{max_attempts: -1, initial_backoff_ms: -10, max_backoff_ms: -5}
+    }
+
     {:error, errs} = Config.validate(bad)
 
     assert {{:retries, :max_attempts}, :non_negative_integer_required} in errs
@@ -33,15 +41,30 @@ defmodule Temporal.ClientConfigValidateTest do
   end
 
   test "tls invalid type" do
-    {:error, errs} = Config.validate(%Config{host: "h", namespace: "n", task_queue: "q", tls: :bad})
+    {:error, errs} =
+      Config.validate(%Config{host: "h", namespace: "n", task_queue: "q", tls: :bad})
+
     assert {:tls, :invalid} in errs
   end
 
   test "tls insecure_skip_verify must be boolean if present" do
-    {:error, errs} = Config.validate(%Config{host: "h", namespace: "n", task_queue: "q", tls: %{insecure_skip_verify: "nope"}})
+    {:error, errs} =
+      Config.validate(%Config{
+        host: "h",
+        namespace: "n",
+        task_queue: "q",
+        tls: %{insecure_skip_verify: "nope"}
+      })
+
     assert {:tls, :invalid_boolean} in errs
 
-    {:ok, _cfg} = Config.validate(%Config{host: "h", namespace: "n", task_queue: "q", tls: %{insecure_skip_verify: true}})
+    {:ok, _cfg} =
+      Config.validate(%Config{
+        host: "h",
+        namespace: "n",
+        task_queue: "q",
+        tls: %{insecure_skip_verify: true}
+      })
   end
 
   test "from_env builds headers and tls" do

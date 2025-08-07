@@ -340,6 +340,7 @@ This document breaks down the requirements from SPEC.md into structured, actiona
 - Encode metadata on Payloads (encoding, messageType, language="elixir") to match cross-SDK expectations
 - Support multi-argument inputs as a list of Payloads; decode query results via converter chain
 - Options for JSON depth/max, atom handling, and binary mode (base64/raw)
+- **Protobuf Integration**: Implement type-based protobuf detection and proper cross-SDK compatibility
 
 **Implementation Notes**:
 - Define a Converter trait in Rust (to_payload/from_payload) and implementations: JsonConverter, BinaryConverter, ProtobufConverter; Custom via NIF callback not required initially
@@ -347,6 +348,12 @@ This document breaks down the requirements from SPEC.md into structured, actiona
 - Expose Elixir config key `:payload_converter` on Temporal.Client.Config and pass through `client_connect`
 - Allow per-call override key `payload_converter` in params maps
 - Set default chain [:json] for MVP; document upgrade path
+- **Protobuf Implementation**:
+  - Research and integrate with Elixir protobuf libraries (`protobuf-elixir` or similar)
+  - Implement type-based protobuf detection (detect Elixir structs that `use Protobuf`)
+  - Create `ProtobufBinaryConverter` and `ProtobufJSONConverter` following Python SDK patterns
+  - Add proper metadata fields (`messageType`, `messageEncoding`) for cross-SDK compatibility
+  - Remove heuristic-based binary detection (already completed)
 
 **Acceptance Criteria**:
 - [ ] Inputs are converted to Payloads with correct metadata according to configured chain
@@ -354,10 +361,13 @@ This document breaks down the requirements from SPEC.md into structured, actiona
 - [ ] Per-call overrides take precedence over client defaults
 - [ ] Property tests for round-trip across primitives, nested maps, binaries
 - [ ] Cross-language compatibility verified by metadata parity with other SDKs
+- [ ] **Protobuf-specific**: Protobuf structs detected by type, not binary patterns
+- [ ] **Protobuf-specific**: Proper serialization/deserialization of protobuf messages
+- [ ] **Protobuf-specific**: Cross-SDK compatibility verified with Python/Go SDKs
 
 **Dependencies**: Task 2.2.2
 
-**Complexity**: Medium - Serialization and interop
+**Complexity**: Complex - Serialization, interop, and protobuf library integration
 
 ---
 

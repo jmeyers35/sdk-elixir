@@ -1,9 +1,12 @@
+#![allow(clippy::uninlined_format_args)] // Will be addressed in future cleanup
+
 use rustler::{Encoder, Env, NifResult, ResourceArc, Term};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
 
 mod client;
+mod converter;
 mod worker;
 
 use client::{
@@ -28,13 +31,16 @@ fn get_runtime() -> &'static Arc<Runtime> {
 }
 
 /// Maximum nesting depth for JSON conversion to prevent stack overflow
+#[allow(dead_code)]
 const MAX_JSON_DEPTH: usize = 32;
 
 /// Convert a Rustler Term to serde_json::Value with depth protection
+#[allow(dead_code)]
 fn term_to_json_value(term: &rustler::Term) -> Result<serde_json::Value, String> {
     term_to_json_value_depth(term, 0)
 }
 
+#[allow(dead_code)]
 fn term_to_json_value_depth(
     term: &rustler::Term,
     depth: usize,
@@ -140,6 +146,112 @@ fn term_to_json_value_depth(
         return Ok(serde_json::Value::Null);
     }
     Err("Unsupported term type for JSON conversion".to_string())
+}
+
+/// Convert Elixir payload map to Rust Payload struct
+fn term_to_payload(
+    term: &rustler::Term,
+) -> Result<temporal_sdk_core_protos::temporal::api::common::v1::Payload, String> {
+    use temporal_sdk_core_protos::temporal::api::common::v1::Payload;
+
+    // Convert Elixir payload map with atom keys to Rust Payload
+
+    // Try to decode as a map with atom keys (Elixir default)
+    if let Ok(payload_map) =
+        term.decode::<std::collections::HashMap<rustler::types::atom::Atom, rustler::Term>>()
+    {
+        // Successfully decoded Elixir map with atom keys
+
+        // Find keys by comparing atom string representation
+        let mut metadata_term = None;
+        let mut data_term = None;
+
+        for (atom_key, term_val) in payload_map.iter() {
+            // Use the debug string representation to identify the key
+            let key_debug = format!("{:?}", atom_key);
+            if key_debug == "metadata" {
+                metadata_term = Some(term_val);
+            } else if key_debug == "data" {
+                data_term = Some(term_val);
+            }
+        }
+
+        // Extract metadata (required)
+        let metadata = if let Some(metadata_term) = metadata_term {
+            // Try different metadata formats - Elixir uses binary keys/values
+            if let Ok(metadata_map) = metadata_term.decode::<HashMap<Vec<u8>, Vec<u8>>>() {
+                metadata_map
+                    .into_iter()
+                    .map(|(k, v)| (String::from_utf8_lossy(&k).to_string(), v))
+                    .collect()
+            } else if let Ok(metadata_map) = metadata_term.decode::<HashMap<String, Vec<u8>>>() {
+                metadata_map
+            } else if let Ok(metadata_map) = metadata_term.decode::<HashMap<String, String>>() {
+                metadata_map
+                    .into_iter()
+                    .map(|(k, v)| (k, v.into_bytes()))
+                    .collect()
+            } else {
+                HashMap::new()
+            }
+        } else {
+            HashMap::new()
+        };
+
+        // Extract data (optional, defaults to empty)
+        let data = if let Some(data_term) = data_term {
+            // Try to decode as binary first
+            if let Ok(binary) = data_term.decode::<Vec<u8>>() {
+                binary
+            } else if let Ok(string) = data_term.decode::<String>() {
+                // If it's a string, convert to bytes
+                string.into_bytes()
+            } else {
+                // Default to empty if can't decode
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
+        return Ok(Payload { metadata, data });
+    }
+
+    // Fallback: try to decode as map with string keys
+    let payload_map: HashMap<String, rustler::Term> = term.decode().map_err(|_| {
+        "Failed to decode payload as map (tried both atom and string keys)".to_string()
+    })?;
+
+    // Extract metadata (required)
+    let metadata = if let Some(metadata_term) = payload_map.get("metadata") {
+        let metadata_map: HashMap<String, Vec<u8>> = metadata_term
+            .decode::<HashMap<String, String>>()
+            .map_err(|_| "Failed to decode metadata as map".to_string())?
+            .into_iter()
+            .map(|(k, v)| (k, v.into_bytes()))
+            .collect();
+        metadata_map
+    } else {
+        HashMap::new()
+    };
+
+    // Extract data (optional, defaults to empty)
+    let data = if let Some(data_term) = payload_map.get("data") {
+        // Try to decode as binary
+        if let Ok(binary) = data_term.decode::<Vec<u8>>() {
+            binary
+        } else if let Ok(string) = data_term.decode::<String>() {
+            // If it's a string, convert to bytes
+            string.into_bytes()
+        } else {
+            // Default to empty if can't decode
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    Ok(Payload { metadata, data })
 }
 
 /// Convert serde_json::Value back to Rustler Term
@@ -309,6 +421,53 @@ fn client_connect<'a>(env: Env<'a>, config_term: Term<'a>) -> NifResult<Term<'a>
         }
     };
 
+    // Extract payload converter config
+    let (converter, _conv_opts) = {
+        let spec_term = config_map.get("payload_converter");
+        let opts_term = config_map.get("payload_converter_options");
+        let binary_max = opts_term
+            .and_then(|t| {
+                t.decode::<std::collections::HashMap<String, rustler::Term>>()
+                    .ok()
+            })
+            .and_then(|m| {
+                m.get("binary_max_size")
+                    .and_then(|t| t.decode::<u64>().ok())
+            })
+            .unwrap_or(1024 * 1024) as usize;
+        let json_depth = opts_term
+            .and_then(|t| {
+                t.decode::<std::collections::HashMap<String, rustler::Term>>()
+                    .ok()
+            })
+            .and_then(|m| m.get("json_max_depth").and_then(|t| t.decode::<u64>().ok()))
+            .unwrap_or(32) as usize;
+        let mut conv = crate::converter::CompositeConverter::default();
+        if let Some(spec) = spec_term {
+            if let Ok(list) = spec.decode::<Vec<rustler::Term>>() {
+                let mut v: Vec<Box<dyn crate::converter::PayloadConverter>> = Vec::new();
+                for item in list {
+                    if let Ok(s) = item.decode::<String>() {
+                        match s.as_str() {
+                            "nil" => v.push(Box::new(crate::converter::NilConverter)),
+                            "binary" => {
+                                v.push(Box::new(crate::converter::BinaryConverter::new(binary_max)))
+                            }
+                            "json" => v.push(Box::new(crate::converter::JsonConverter::new(
+                                json_depth, true,
+                            ))),
+                            _ => {}
+                        }
+                    }
+                }
+                if !v.is_empty() {
+                    conv = crate::converter::CompositeConverter::new(v);
+                }
+            }
+        }
+        (conv, ())
+    };
+
     // Extract optional configuration fields
     let client_name = config_map
         .get("client_name")
@@ -383,7 +542,8 @@ fn client_connect<'a>(env: Env<'a>, config_term: Term<'a>) -> NifResult<Term<'a>
     let rt = get_runtime();
 
     match rt.block_on(ClientResource::connect(target_url, namespace, options)) {
-        Ok(client) => {
+        Ok(mut client) => {
+            client.converter = converter;
             let resource = ResourceArc::new(client);
             Ok(resource.encode(env))
         }
@@ -458,21 +618,26 @@ fn client_start_workflow<'a>(
         }
     };
 
-    // Extract optional fields - parse input from Elixir term
-    let input: Option<Vec<serde_json::Value>> = params_map.get("input").and_then(|term| {
-        // Try to decode as Vec<rustler::Term> first
-        let elixir_list: Vec<rustler::Term> = term.decode().ok()?;
-        // Convert each term to serde_json::Value
-        let json_values: Result<Vec<serde_json::Value>, _> = elixir_list
-            .iter()
-            .map(|elixir_term| {
-                // Decode as Rust value that can be converted to JSON
-                // This handles maps, lists, strings, numbers, booleans
-                term_to_json_value(elixir_term)
-            })
-            .collect();
-        json_values.ok()
-    });
+    // Extract optional fields - parse pre-converted payloads from Elixir
+    let input: Option<Vec<temporal_sdk_core_protos::temporal::api::common::v1::Payload>> =
+        params_map.get("input").and_then(|term| {
+            // Try to decode as Vec<rustler::Term> first
+            let elixir_list: Vec<rustler::Term> = term.decode().ok()?;
+
+            // Convert each Elixir payload map to Rust Payload
+            let mut payloads = Vec::new();
+            for elixir_term in elixir_list.iter() {
+                match term_to_payload(elixir_term) {
+                    Ok(payload) => {
+                        payloads.push(payload);
+                    }
+                    Err(_) => {
+                        return None;
+                    }
+                }
+            }
+            Some(payloads)
+        });
 
     let request_id = params_map
         .get("request_id")
@@ -586,15 +751,16 @@ fn client_signal_workflow<'a>(
         .get("namespace")
         .and_then(|term| term.decode::<String>().ok());
 
-    // Parse input using existing JSON conversion
-    let input: Option<Vec<serde_json::Value>> = params_map.get("input").and_then(|term| {
-        let elixir_list: Vec<rustler::Term> = term.decode().ok()?;
-        let json_values: Result<Vec<serde_json::Value>, _> = elixir_list
-            .iter()
-            .map(|elixir_term| term_to_json_value(elixir_term))
-            .collect();
-        json_values.ok()
-    });
+    // Parse pre-converted payloads from Elixir
+    let input: Option<Vec<temporal_sdk_core_protos::temporal::api::common::v1::Payload>> =
+        params_map.get("input").and_then(|term| {
+            let elixir_list: Vec<rustler::Term> = term.decode().ok()?;
+            let payloads: Result<Vec<_>, _> = elixir_list
+                .iter()
+                .map(|elixir_term| term_to_payload(elixir_term))
+                .collect();
+            payloads.ok()
+        });
 
     // Build parameters struct
     let signal_params = WorkflowSignalParams {
@@ -673,15 +839,16 @@ fn client_query_workflow<'a>(
         .get("namespace")
         .and_then(|term| term.decode::<String>().ok());
 
-    // Parse input using existing JSON conversion
-    let input: Option<Vec<serde_json::Value>> = params_map.get("input").and_then(|term| {
-        let elixir_list: Vec<rustler::Term> = term.decode().ok()?;
-        let json_values: Result<Vec<serde_json::Value>, _> = elixir_list
-            .iter()
-            .map(|elixir_term| term_to_json_value(elixir_term))
-            .collect();
-        json_values.ok()
-    });
+    // Parse pre-converted payloads from Elixir
+    let input: Option<Vec<temporal_sdk_core_protos::temporal::api::common::v1::Payload>> =
+        params_map.get("input").and_then(|term| {
+            let elixir_list: Vec<rustler::Term> = term.decode().ok()?;
+            let payloads: Result<Vec<_>, _> = elixir_list
+                .iter()
+                .map(|elixir_term| term_to_payload(elixir_term))
+                .collect();
+            payloads.ok()
+        });
 
     // Build parameters struct
     let query_params = WorkflowQueryParams {

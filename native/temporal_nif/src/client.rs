@@ -18,6 +18,7 @@ use uuid::Uuid;
 /// and designed for concurrent usage in Temporal SDK Core
 pub struct ClientResource {
     inner: Arc<RetryClient<Client>>,
+    pub(crate) converter: crate::converter::CompositeConverter,
 }
 
 /// TLS configuration for client connections
@@ -41,7 +42,6 @@ pub struct ClientOptions {
     pub retries: Option<RetryOptions>,
 }
 
-
 #[derive(Debug, Clone, Default)]
 pub struct RetryOptions {
     pub max_attempts: u32,
@@ -55,7 +55,7 @@ pub struct WorkflowStartParams {
     pub workflow_id: String,
     pub workflow_type: String,
     pub task_queue: String,
-    pub input: Option<Vec<serde_json::Value>>,
+    pub input: Option<Vec<Payload>>, // Now accepts pre-converted payloads
     pub request_id: Option<String>,
     #[allow(dead_code)] // Will be implemented in future iteration
     pub execution_timeout: Option<u64>,
@@ -80,7 +80,7 @@ pub struct WorkflowSignalParams {
     pub workflow_id: String,
     pub run_id: Option<String>,
     pub signal_name: String,
-    pub input: Option<Vec<serde_json::Value>>,
+    pub input: Option<Vec<Payload>>, // Now accepts pre-converted payloads
     pub namespace: Option<String>,
 }
 
@@ -91,7 +91,7 @@ pub struct WorkflowQueryParams {
     pub workflow_id: String,
     pub run_id: Option<String>,
     pub query_type: String,
-    pub input: Option<Vec<serde_json::Value>>,
+    pub input: Option<Vec<Payload>>, // Now accepts pre-converted payloads
     pub namespace: Option<String>,
 }
 
@@ -216,6 +216,7 @@ impl ClientResource {
 
         Ok(Self {
             inner: Arc::new(client),
+            converter: crate::converter::CompositeConverter::default(),
         })
     }
 
@@ -224,20 +225,13 @@ impl ClientResource {
         &self,
         params: WorkflowStartParams,
     ) -> Result<WorkflowHandle, String> {
-        // Serialize workflow inputs to JSON payloads
-        let input_payloads = if let Some(inputs) = params.input {
-            let mut payloads = Vec::new();
-            for input in inputs {
-                let json_bytes = serde_json::to_vec(&input)
-                    .map_err(|e| format!("Failed to serialize input: {}", e))?;
-
-                let payload = Payload {
-                    metadata: [("encoding".to_string(), "json/plain".as_bytes().to_vec())].into(),
-                    data: json_bytes,
-                };
-                payloads.push(payload);
+        // Use pre-converted payloads from Elixir layer
+        let input_payloads = if let Some(payloads) = params.input {
+            if payloads.is_empty() {
+                None
+            } else {
+                Some(Payloads { payloads })
             }
-            Some(Payloads { payloads })
         } else {
             None
         };
@@ -288,20 +282,13 @@ impl ClientResource {
     /// Send a signal to a workflow execution
     #[allow(dead_code)] // Will be used in NIF implementation
     pub async fn signal_workflow(&self, params: WorkflowSignalParams) -> Result<(), String> {
-        // Serialize signal input to JSON payloads
-        let input_payloads = if let Some(inputs) = params.input {
-            let mut payloads = Vec::new();
-            for input in inputs {
-                let json_bytes = serde_json::to_vec(&input)
-                    .map_err(|e| format!("Failed to serialize signal input: {}", e))?;
-
-                let payload = Payload {
-                    metadata: [("encoding".to_string(), "json/plain".as_bytes().to_vec())].into(),
-                    data: json_bytes,
-                };
-                payloads.push(payload);
+        // Use pre-converted payloads from Elixir layer
+        let input_payloads = if let Some(payloads) = params.input {
+            if payloads.is_empty() {
+                None
+            } else {
+                Some(Payloads { payloads })
             }
-            Some(Payloads { payloads })
         } else {
             None
         };
@@ -341,20 +328,13 @@ impl ClientResource {
         &self,
         params: WorkflowQueryParams,
     ) -> Result<QueryResponse, String> {
-        // Serialize query input to JSON payloads
-        let input_payloads = if let Some(inputs) = params.input {
-            let mut payloads = Vec::new();
-            for input in inputs {
-                let json_bytes = serde_json::to_vec(&input)
-                    .map_err(|e| format!("Failed to serialize query input: {}", e))?;
-
-                let payload = Payload {
-                    metadata: [("encoding".to_string(), "json/plain".as_bytes().to_vec())].into(),
-                    data: json_bytes,
-                };
-                payloads.push(payload);
+        // Use pre-converted payloads from Elixir layer
+        let input_payloads = if let Some(payloads) = params.input {
+            if payloads.is_empty() {
+                None
+            } else {
+                Some(Payloads { payloads })
             }
-            Some(Payloads { payloads })
         } else {
             None
         };
@@ -393,13 +373,13 @@ impl ClientResource {
             });
         }
 
-        // Parse query result
+        // Parse query result using converter chain
         let result = if let Some(query_result) = inner_response.query_result {
             if let Some(first_payload) = query_result.payloads.first() {
-                // Deserialize JSON response
-                let json_value: serde_json::Value = serde_json::from_slice(&first_payload.data)
-                    .map_err(|e| format!("Failed to deserialize query result: {}", e))?;
-                Some(json_value)
+                match self.converter.from_payload(first_payload) {
+                    Ok(value) => Some(value),
+                    Err(e) => return Err(format!("Failed to deserialize query result: {}", e)),
+                }
             } else {
                 None
             }

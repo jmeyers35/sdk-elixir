@@ -8,6 +8,10 @@ This is the Temporal Elixir SDK - an Elixir SDK for Temporal workflow orchestrat
 
 **Architecture**: Elixir API layer using GenServer/OTP patterns with Rust NIFs for core Temporal operations.
 
+## Development Philosophy
+
+- We should ALWAYS strive to match the interfaces/APIs of the Python SDK, except where it makes sense to have Elixir-specific abstractions. This means for core features, like Payload conversion.
+
 ## Development Commands
 
 ### Build and Test
