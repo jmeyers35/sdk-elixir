@@ -319,10 +319,10 @@ This document breaks down the requirements from SPEC.md into structured, actiona
 - Document all configuration options
 
 **Acceptance Criteria**:
-- [ ] All client options configurable
-- [ ] TLS configuration works properly
-- [ ] Environment variables override defaults
-- [ ] Configuration validation prevents invalid setups
+- [x] All client options configurable
+- [x] TLS configuration works properly
+- [x] Environment variables override defaults
+- [x] Configuration validation prevents invalid setups
 
 **Dependencies**: Task 2.2.1
 

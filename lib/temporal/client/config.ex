@@ -129,7 +129,7 @@ defmodule Temporal.Client.Config do
   def resolve_payload_converter(spec, options \\ %{})
 
   def resolve_payload_converter(:default, options) do
-    resolve_payload_converter([nil, :binary, :json], options)
+    resolve_payload_converter([nil, :protobuf, :binary, :json], options)
   end
 
   def resolve_payload_converter(converter_list, options) when is_list(converter_list) do
@@ -157,6 +157,13 @@ defmodule Temporal.Client.Config do
       max_depth: Map.get(options, :json_max_depth, 32),
       atom_handling: Map.get(options, :json_atom_handling, :string),
       sort_keys: true
+    }
+  end
+
+  defp resolve_single_converter(:protobuf, options) do
+    %Temporal.PayloadConverter.ProtobufConverter{
+      mode: Map.get(options, :protobuf_mode, :binary),
+      include_type_url: Map.get(options, :protobuf_include_type_url, true)
     }
   end
 

@@ -46,7 +46,7 @@ defmodule Temporal.PayloadConverter.JsonConverter do
   @impl true
   def from_payload(_converter, %{data: data, metadata: %{"encoding" => "json/plain"}})
       when is_binary(data) do
-    case Jason.decode(data, keys: :atoms) do
+    case Jason.decode(data) do
       {:ok, decoded} -> {:ok, decoded}
       {:error, reason} -> {:error, {:json_decoding_failed, reason}}
     end

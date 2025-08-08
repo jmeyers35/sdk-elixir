@@ -75,7 +75,6 @@ pub struct WorkflowHandle {
 
 /// Parameters for signaling a workflow
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Will be used in NIF implementation
 pub struct WorkflowSignalParams {
     pub workflow_id: String,
     pub run_id: Option<String>,
@@ -86,7 +85,6 @@ pub struct WorkflowSignalParams {
 
 /// Parameters for querying a workflow
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Will be used in NIF implementation
 pub struct WorkflowQueryParams {
     pub workflow_id: String,
     pub run_id: Option<String>,
@@ -97,7 +95,6 @@ pub struct WorkflowQueryParams {
 
 /// Query response data
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Will be used in NIF implementation
 pub struct QueryResponse {
     pub result: Option<serde_json::Value>,
     pub query_rejected: Option<String>, // Rejection reason if query was rejected
@@ -280,7 +277,6 @@ impl ClientResource {
     }
 
     /// Send a signal to a workflow execution
-    #[allow(dead_code)] // Will be used in NIF implementation
     pub async fn signal_workflow(&self, params: WorkflowSignalParams) -> Result<(), String> {
         // Use pre-converted payloads from Elixir layer
         let input_payloads = if let Some(payloads) = params.input {
@@ -323,7 +319,6 @@ impl ClientResource {
     }
 
     /// Query a workflow execution
-    #[allow(dead_code)] // Will be used in NIF implementation
     pub async fn query_workflow(
         &self,
         params: WorkflowQueryParams,

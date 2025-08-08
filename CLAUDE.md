@@ -61,6 +61,9 @@ mix run examples/basic_client.exs
 
 # Signal and query example  
 mix run examples/signal_and_query_example.exs
+
+# Protobuf payload converter example
+mix run examples/protobuf_example.exs
 ```
 
 ### Rust NIF Development

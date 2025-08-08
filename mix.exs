@@ -25,6 +25,7 @@ defmodule Temporal.MixProject do
       {:rustler, "~> 0.36", runtime: false},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.2"},
+      {:protobuf, "~> 0.12"},
       {:httpoison, "~> 2.0", only: :test},
       {:testcontainers, "1.5.1", only: :test},
       {:mox, "~> 1.0", only: :test},

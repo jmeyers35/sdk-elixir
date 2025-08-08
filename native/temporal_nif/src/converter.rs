@@ -1,4 +1,3 @@
-#![allow(dead_code)] // Converter code will be integrated with NIFs in next phase
 #![allow(clippy::wrong_self_convention)] // from_payload follows Temporal SDK patterns
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -6,10 +5,10 @@ use std::collections::HashMap;
 use temporal_sdk_core::protos::temporal::api::common::v1::Payload;
 
 /// Error types for payload conversion
-#[allow(dead_code)] // Will be used when NIF functions are implemented
 #[derive(Debug, thiserror::Error)]
 pub enum ConversionError {
     #[error("Unsupported type: {type_name}")]
+    #[allow(dead_code)] // Will be used for future type validation
     UnsupportedType { type_name: String },
     #[error("Serialization failed: {source}")]
     SerializationFailed {
@@ -26,10 +25,10 @@ pub enum ConversionError {
 }
 
 /// Trait for payload converters that can transform Elixir terms to/from Temporal Payloads
-#[allow(dead_code)] // Will be used when NIF functions are implemented
 pub trait PayloadConverter: Send + Sync {
     /// Convert Elixir term to Temporal Payload
     /// Returns None if this converter cannot handle the data type
+    #[allow(dead_code)] // Used by individual converters, not called directly
     fn to_payload(&self, data: &serde_json::Value) -> Result<Option<Payload>, ConversionError>;
 
     /// Convert Temporal Payload back to JSON value
@@ -44,6 +43,7 @@ pub trait PayloadConverter: Send + Sync {
     fn priority(&self) -> u32;
 
     /// Test if this converter can handle the given data type
+    #[allow(dead_code)] // Used by individual converters for validation
     fn can_convert(&self, data: &serde_json::Value) -> bool;
 }
 
@@ -335,6 +335,7 @@ impl CompositeConverter {
     }
 
     /// Convert a list of JSON values to payloads
+    #[allow(dead_code)] // Will be integrated with NIFs in future phase
     pub fn to_payloads(
         &self,
         values: &[serde_json::Value],
@@ -350,6 +351,7 @@ impl CompositeConverter {
     }
 
     /// Convert payloads back to JSON values
+    #[allow(dead_code)] // Will be integrated with NIFs in future phase
     pub fn from_payloads(
         &self,
         payloads: &[Payload],
@@ -365,6 +367,7 @@ impl CompositeConverter {
     }
 
     /// Convert single JSON value to payload using converter chain
+    #[allow(dead_code)] // Will be integrated with NIFs in future phase
     pub fn to_payload(&self, data: &serde_json::Value) -> Result<Payload, ConversionError> {
         for converter in &self.converters {
             match converter.to_payload(data) {

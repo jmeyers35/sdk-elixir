@@ -9,6 +9,7 @@ Mox.defmock(Temporal.Native.Mock, for: Temporal.Native.Behaviour)
 # Load test support modules
 Code.require_file("support/temporal_test_container.ex", __DIR__)
 Code.require_file("support/temporal_mocks.ex", __DIR__)
+Code.require_file("support/protobuf_test_messages.ex", __DIR__)
 
 # Start the container state agent
 Temporal.TestContainer.start_link()

@@ -30,124 +30,6 @@ fn get_runtime() -> &'static Arc<Runtime> {
     })
 }
 
-/// Maximum nesting depth for JSON conversion to prevent stack overflow
-#[allow(dead_code)]
-const MAX_JSON_DEPTH: usize = 32;
-
-/// Convert a Rustler Term to serde_json::Value with depth protection
-#[allow(dead_code)]
-fn term_to_json_value(term: &rustler::Term) -> Result<serde_json::Value, String> {
-    term_to_json_value_depth(term, 0)
-}
-
-#[allow(dead_code)]
-fn term_to_json_value_depth(
-    term: &rustler::Term,
-    depth: usize,
-) -> Result<serde_json::Value, String> {
-    if depth > MAX_JSON_DEPTH {
-        return Err("JSON nesting too deep".to_string());
-    }
-    // Try different Rust types that can be converted to JSON
-    if let Ok(s) = term.decode::<String>() {
-        return Ok(serde_json::Value::String(s));
-    }
-
-    // Try different integer types - start with smaller types for efficiency
-    if let Ok(n) = term.decode::<i32>() {
-        return Ok(serde_json::Value::Number(serde_json::Number::from(n)));
-    }
-    if let Ok(n) = term.decode::<u32>() {
-        return Ok(serde_json::Value::Number(serde_json::Number::from(n)));
-    }
-    if let Ok(n) = term.decode::<i64>() {
-        return Ok(serde_json::Value::Number(serde_json::Number::from(n)));
-    }
-    if let Ok(n) = term.decode::<u64>() {
-        // Check if it fits in JSON number range
-        if n <= i64::MAX as u64 {
-            return Ok(serde_json::Value::Number(serde_json::Number::from(
-                n as i64,
-            )));
-        }
-    }
-    if let Ok(n) = term.decode::<isize>() {
-        return Ok(serde_json::Value::Number(serde_json::Number::from(
-            n as i64,
-        )));
-    }
-    if let Ok(n) = term.decode::<usize>() {
-        if n <= i64::MAX as usize {
-            return Ok(serde_json::Value::Number(serde_json::Number::from(
-                n as i64,
-            )));
-        }
-    }
-    if let Ok(n) = term.decode::<f64>() {
-        if let Some(num) = serde_json::Number::from_f64(n) {
-            return Ok(serde_json::Value::Number(num));
-        }
-    }
-    if let Ok(b) = term.decode::<bool>() {
-        return Ok(serde_json::Value::Bool(b));
-    }
-    // Try as map (Elixir map -> JSON object)
-    // First try string keys
-    if let Ok(map) = term.decode::<HashMap<String, rustler::Term>>() {
-        let mut json_map = serde_json::Map::new();
-        for (key, value) in map {
-            json_map.insert(key, term_to_json_value_depth(&value, depth + 1)?);
-        }
-        return Ok(serde_json::Value::Object(json_map));
-    }
-
-    // Then try atom keys (common in Elixir)
-    if let Ok(map) = term.decode::<HashMap<rustler::Atom, rustler::Term>>() {
-        let mut json_map = serde_json::Map::new();
-        for (key, value) in map {
-            // Convert atom to string - use debug format since atoms don't implement Display
-            let key_str = format!("{:?}", key);
-            json_map.insert(key_str, term_to_json_value_depth(&value, depth + 1)?);
-        }
-        return Ok(serde_json::Value::Object(json_map));
-    }
-
-    // Try as tuples (convert to JSON arrays)
-    if let Ok(tuple) = term.decode::<(rustler::Term,)>() {
-        return Ok(serde_json::Value::Array(vec![term_to_json_value_depth(
-            &tuple.0,
-            depth + 1,
-        )?]));
-    }
-    if let Ok(tuple) = term.decode::<(rustler::Term, rustler::Term)>() {
-        return Ok(serde_json::Value::Array(vec![
-            term_to_json_value_depth(&tuple.0, depth + 1)?,
-            term_to_json_value_depth(&tuple.1, depth + 1)?,
-        ]));
-    }
-    if let Ok(tuple) = term.decode::<(rustler::Term, rustler::Term, rustler::Term)>() {
-        return Ok(serde_json::Value::Array(vec![
-            term_to_json_value_depth(&tuple.0, depth + 1)?,
-            term_to_json_value_depth(&tuple.1, depth + 1)?,
-            term_to_json_value_depth(&tuple.2, depth + 1)?,
-        ]));
-    }
-
-    // Try as list (Elixir list -> JSON array)
-    if let Ok(list) = term.decode::<Vec<rustler::Term>>() {
-        let json_array: Result<Vec<serde_json::Value>, String> = list
-            .iter()
-            .map(|t| term_to_json_value_depth(t, depth + 1))
-            .collect();
-        return Ok(serde_json::Value::Array(json_array?));
-    }
-    // Handle nil/null
-    if let Ok(()) = term.decode::<()>() {
-        return Ok(serde_json::Value::Null);
-    }
-    Err("Unsupported term type for JSON conversion".to_string())
-}
-
 /// Convert Elixir payload map to Rust Payload struct
 fn term_to_payload(
     term: &rustler::Term,
@@ -167,11 +49,12 @@ fn term_to_payload(
         let mut data_term = None;
 
         for (atom_key, term_val) in payload_map.iter() {
-            // Use the debug string representation to identify the key
+            // Use the debug string representation and strip the : prefix
             let key_debug = format!("{:?}", atom_key);
-            if key_debug == "metadata" {
+            let key_str = key_debug.strip_prefix(':').unwrap_or(&key_debug);
+            if key_str == "metadata" {
                 metadata_term = Some(term_val);
-            } else if key_debug == "data" {
+            } else if key_str == "data" {
                 data_term = Some(term_val);
             }
         }
@@ -200,8 +83,10 @@ fn term_to_payload(
 
         // Extract data (optional, defaults to empty)
         let data = if let Some(data_term) = data_term {
-            // Try to decode as binary first
-            if let Ok(binary) = data_term.decode::<Vec<u8>>() {
+            // Try to decode as rustler::Binary first (Elixir binary type)
+            if let Ok(binary) = data_term.decode::<rustler::Binary>() {
+                binary.as_slice().to_vec()
+            } else if let Ok(binary) = data_term.decode::<Vec<u8>>() {
                 binary
             } else if let Ok(string) = data_term.decode::<String>() {
                 // If it's a string, convert to bytes

@@ -10,6 +10,7 @@ defmodule Temporal.PayloadConverter do
   - `JsonConverter` - JSON serialization with deterministic key ordering
   - `BinaryConverter` - Raw binary data handling  
   - `NilConverter` - Handles nil/undefined values
+  - `ProtobufConverter` - Protocol Buffer message serialization
 
   ## Example Usage
 
@@ -89,12 +90,14 @@ defmodule Temporal.PayloadConverter do
   
   The default chain includes (in priority order):
   1. NilConverter - handles nil values
-  2. BinaryConverter - handles binary data
-  3. JsonConverter - handles everything else via JSON encoding
+  2. ProtobufConverter - handles Protocol Buffer messages
+  3. BinaryConverter - handles binary data
+  4. JsonConverter - handles everything else via JSON encoding
   """
   def default_converter_chain do
     [
       %Temporal.PayloadConverter.NilConverter{},
+      %Temporal.PayloadConverter.ProtobufConverter{},
       %Temporal.PayloadConverter.BinaryConverter{},
       %Temporal.PayloadConverter.JsonConverter{}
     ]
