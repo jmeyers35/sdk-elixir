@@ -776,12 +776,110 @@ fn client_query_workflow<'a>(
 #[rustler::nif]
 fn worker_new<'a>(
     env: Env<'a>,
-    _client: ResourceArc<ClientResource>,
-    _config: Term<'a>,
+    client: ResourceArc<ClientResource>,
+    config_term: Term<'a>,
 ) -> NifResult<Term<'a>> {
-    let worker = WorkerResource::new();
-    let resource = ResourceArc::new(worker);
-    Ok(resource.encode(env))
+    // Parse configuration from Elixir term
+    let config_map: HashMap<String, rustler::Term> = match config_term.decode() {
+        Ok(map) => map,
+        Err(_) => {
+            let error_tuple = (rustler::types::atom::error(), "Configuration must be a map");
+            return Ok(error_tuple.encode(env));
+        }
+    };
+
+    // Extract required fields
+    let namespace = match config_map.get("namespace") {
+        Some(term) => match term.decode::<String>() {
+            Ok(ns) => ns,
+            Err(_) => {
+                let error_tuple = (rustler::types::atom::error(), "namespace must be a string");
+                return Ok(error_tuple.encode(env));
+            }
+        },
+        None => "default".to_string(), // Use default if not provided
+    };
+
+    let task_queue = match config_map.get("task_queue") {
+        Some(term) => match term.decode::<String>() {
+            Ok(tq) => tq,
+            Err(_) => {
+                let error_tuple = (rustler::types::atom::error(), "task_queue must be a string");
+                return Ok(error_tuple.encode(env));
+            }
+        },
+        None => {
+            let error_tuple = (rustler::types::atom::error(), "task_queue is required");
+            return Ok(error_tuple.encode(env));
+        }
+    };
+
+    // Extract optional configuration fields with defaults
+    let max_cached_workflows = config_map
+        .get("max_cached_workflows")
+        .and_then(|term| term.decode::<usize>().ok())
+        .unwrap_or(0);
+
+    let max_outstanding_workflow_tasks = config_map
+        .get("max_outstanding_workflow_tasks")
+        .and_then(|term| term.decode::<usize>().ok())
+        .unwrap_or(100);
+
+    let max_outstanding_activities = config_map
+        .get("max_outstanding_activities")
+        .and_then(|term| term.decode::<usize>().ok())
+        .unwrap_or(100);
+
+    let max_outstanding_local_activities = config_map
+        .get("max_outstanding_local_activities")
+        .and_then(|term| term.decode::<usize>().ok())
+        .unwrap_or(100);
+
+    let no_remote_activities = config_map
+        .get("no_remote_activities")
+        .and_then(|term| term.decode::<bool>().ok())
+        .unwrap_or(false);
+
+    let sticky_queue_schedule_to_start_timeout_ms = config_map
+        .get("sticky_queue_schedule_to_start_timeout_ms")
+        .and_then(|term| term.decode::<u32>().ok())
+        .unwrap_or(10_000);
+
+    let max_heartbeat_throttle_interval_ms = config_map
+        .get("max_heartbeat_throttle_interval_ms")
+        .and_then(|term| term.decode::<u32>().ok())
+        .unwrap_or(60_000);
+
+    let default_heartbeat_throttle_interval_ms = config_map
+        .get("default_heartbeat_throttle_interval_ms")
+        .and_then(|term| term.decode::<u32>().ok())
+        .unwrap_or(5_000);
+
+    // Build worker configuration
+    let config = worker::WorkerConfig {
+        namespace,
+        task_queue,
+        max_cached_workflows,
+        max_outstanding_workflow_tasks,
+        max_outstanding_activities,
+        max_outstanding_local_activities,
+        no_remote_activities,
+        sticky_queue_schedule_to_start_timeout_ms,
+        max_heartbeat_throttle_interval_ms,
+        default_heartbeat_throttle_interval_ms,
+    };
+
+    // Create the worker resource
+    match WorkerResource::new(client, config) {
+        Ok(worker) => {
+            let resource = ResourceArc::new(worker);
+            Ok(resource.encode(env))
+        }
+        Err(err) => {
+            let error_tuple = (rustler::types::atom::error(), err);
+            Ok(error_tuple.encode(env))
+        }
+    }
 }
 
 #[rustler::nif]

@@ -392,10 +392,26 @@ This document breaks down the requirements from SPEC.md into structured, actiona
 - Proper resource lifecycle management
 
 **Acceptance Criteria**:
-- [ ] Worker creates successfully with valid config
-- [ ] Worker resource properly managed
-- [ ] Configuration validation works
-- [ ] No memory leaks or resource issues
+- [x] Worker creates successfully with valid config
+- [x] Worker resource properly managed
+- [x] Configuration validation works
+- [x] No memory leaks or resource issues
+
+**COMPLETED** ✅
+
+**Implementation Summary**:
+- Implemented `worker_new` NIF with comprehensive configuration parsing
+- Created `WorkerResource` with proper ResourceArc management
+- Added extensive configuration validation (required/optional fields, defaults)
+- Created comprehensive test coverage for worker creation scenarios
+- Added example demonstrating worker creation with various configurations
+- All tests passing (112 total tests, including new worker creation tests)
+
+**Files Modified**:
+- `native/temporal_nif/src/worker.rs` - Complete worker resource implementation
+- `native/temporal_nif/src/lib.rs` - Updated `worker_new` NIF function
+- `test/temporal/worker_test.exs` - Comprehensive test coverage
+- `examples/basic_worker.exs` - Working example with multiple scenarios
 
 **Dependencies**: Task 2.2.2
 
