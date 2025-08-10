@@ -436,14 +436,91 @@ This document breaks down the requirements from SPEC.md into structured, actiona
 - Implement proper error propagation
 
 **Acceptance Criteria**:
-- [ ] Successfully polls for workflow tasks
-- [ ] Successfully polls for activity tasks
-- [ ] Handles polling timeouts gracefully
-- [ ] Task data properly converted to Elixir
+- [x] Successfully polls for workflow tasks
+- [x] Successfully polls for activity tasks
+- [x] Handles polling timeouts gracefully
+- [x] Task data properly converted to Elixir
+
+**COMPLETED** ✅
+
+**Implementation Summary**:
+- Implemented `worker_poll_workflow_task` and `worker_poll_activity_task` NIFs with proper SDK Core integration
+- Fixed critical task token handling - workflow tasks now correctly use `run_id` for completion, activity tasks preserve server-provided task tokens
+- Added 60-second timeout for long polling with proper error sanitization
+- Comprehensive integration testing with real Temporal server via Testcontainers
+- All 115 tests passing including polling integration tests
 
 **Dependencies**: Task 3.1.1
 
 **Complexity**: Medium - Async polling with data conversion
+
+---
+
+#### Task 3.1.2.1: Implement Protobuf Data Serialization for Cross-SDK Compatibility
+
+**Objective**: Replace custom data structures with protobuf serialization for full Temporal SDK compatibility
+
+**Requirements**:
+- Replace custom `WorkflowTaskData` and `ActivityTaskData` structs with direct protobuf serialization
+- Return serialized protobuf bytes from NIFs instead of custom structs
+- Add Elixir protobuf decode/encode layer for structured data access
+- Ensure wire-format compatibility with Python/Go/Java SDKs
+- Preserve all protobuf metadata for cross-language interoperability
+
+**Implementation Notes**:
+- **Phase 1**: Modify worker polling NIFs to return serialized `WorkflowActivation` and `ActivityTask` protobuf bytes
+- **Phase 2**: Create Elixir protobuf wrapper modules (`Temporal.Protobuf.WorkflowActivation`, `Temporal.Protobuf.ActivityTask`)
+- **Phase 3**: Update client operations (`start_workflow`, `signal_workflow`, `query_workflow`) to use protobuf serialization
+- **Phase 4**: Extend to payload converter operations and all Temporal server interactions
+
+**Protobuf Messages to Handle**:
+```rust
+// Core SDK protobuf messages to serialize directly
+use temporal_sdk_core_protos::coresdk::{
+    workflow_activation::WorkflowActivation,
+    activity_task::ActivityTask,
+    workflow_completion::WorkflowActivationCompletion,
+    // Add others as needed
+};
+```
+
+**Elixir Integration Pattern**:
+```elixir
+# Example protobuf wrapper module
+defmodule Temporal.Protobuf.WorkflowActivation do
+  def decode(bytes) when is_binary(bytes) do
+    case :temporal_protos.decode_workflow_activation(bytes) do
+      {:ok, activation} -> {:ok, activation}
+      error -> error
+    end
+  end
+end
+```
+
+**Acceptance Criteria**:
+- [ ] Polling NIFs return serialized protobuf bytes instead of custom structs
+- [ ] Elixir protobuf decode/encode layer provides structured data access
+- [ ] All existing tests continue to pass with protobuf serialization
+- [ ] Cross-SDK compatibility verified - payloads compatible with Python/Go SDKs
+- [ ] No performance regression compared to custom struct approach
+- [ ] Memory usage optimized - no unnecessary serialization/deserialization
+
+**Cross-SDK Compatibility Validation**:
+- [ ] Task completion works with protobuf-serialized task tokens
+- [ ] Workflow activations match format expected by other SDKs
+- [ ] Activity tasks preserve all required metadata
+- [ ] Payload converters produce compatible protobuf payloads
+- [ ] Error messages maintain protobuf structure
+
+**Performance Considerations**:
+- Protobuf serialization may be slightly more expensive than custom structs
+- Memory usage should be similar or better due to efficient protobuf encoding
+- Network compatibility gains outweigh performance costs
+- Consider lazy deserialization patterns for large messages
+
+**Dependencies**: Task 3.1.2
+
+**Complexity**: Complex - Protobuf integration, cross-SDK compatibility validation, performance optimization
 
 ---
 

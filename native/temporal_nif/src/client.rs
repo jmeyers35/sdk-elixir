@@ -101,6 +101,11 @@ pub struct QueryResponse {
 }
 
 impl ClientResource {
+    /// Get a clone of the underlying client for SDK Core worker initialization
+    pub(crate) fn get_inner_client(&self) -> RetryClient<Client> {
+        (*self.inner).clone()
+    }
+
     /// Create a new Temporal client using sdk-core directly following OSS SDK patterns
     pub async fn connect(
         target_url: String,

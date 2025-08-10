@@ -30,6 +30,20 @@ fn get_runtime() -> &'static Arc<Runtime> {
     })
 }
 
+/// Sanitize polling errors to avoid information disclosure
+fn sanitize_polling_error(error: &str) -> String {
+    // Map specific error patterns to safe messages
+    if error.contains("not running") {
+        "Worker not running".to_string()
+    } else if error.contains("timeout") {
+        "Operation timeout".to_string()
+    } else if error.contains("connection") {
+        "Connection error".to_string()
+    } else {
+        "Polling error".to_string()
+    }
+}
+
 /// Convert Elixir payload map to Rust Payload struct
 fn term_to_payload(
     term: &rustler::Term,
@@ -882,20 +896,82 @@ fn worker_new<'a>(
     }
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyIo")]
 fn worker_poll_workflow_task<'a>(
     env: Env<'a>,
-    _worker: ResourceArc<WorkerResource>,
+    worker: ResourceArc<WorkerResource>,
 ) -> NifResult<Term<'a>> {
-    Ok(rustler::types::atom::error().to_term(env))
+    let rt = get_runtime();
+
+    match rt.block_on(async {
+        // Start the worker if not already running
+        worker.start().await?;
+
+        // Poll for workflow task with timeout
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(60), // 60 second timeout for long polling
+            worker.poll_workflow_task(),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err("Polling timeout".to_string()),
+        }
+    }) {
+        Ok(Some(task_data)) => {
+            // Task available - return the task data as binary
+            Ok((rustler::types::atom::ok(), task_data).encode(env))
+        }
+        Ok(None) => {
+            // No task available - return ok with nil
+            Ok((rustler::types::atom::ok(), rustler::types::atom::nil()).encode(env))
+        }
+        Err(err) => {
+            // Worker error - return sanitized error
+            tracing::error!("Workflow task polling error: {}", err);
+            let sanitized_error = sanitize_polling_error(&err);
+            Ok((rustler::types::atom::error(), sanitized_error).encode(env))
+        }
+    }
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyIo")]
 fn worker_poll_activity_task<'a>(
     env: Env<'a>,
-    _worker: ResourceArc<WorkerResource>,
+    worker: ResourceArc<WorkerResource>,
 ) -> NifResult<Term<'a>> {
-    Ok(rustler::types::atom::error().to_term(env))
+    let rt = get_runtime();
+
+    match rt.block_on(async {
+        // Start the worker if not already running
+        worker.start().await?;
+
+        // Poll for activity task with timeout
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(60), // 60 second timeout for long polling
+            worker.poll_activity_task(),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err("Polling timeout".to_string()),
+        }
+    }) {
+        Ok(Some(task_data)) => {
+            // Task available - return the task data as binary
+            Ok((rustler::types::atom::ok(), task_data).encode(env))
+        }
+        Ok(None) => {
+            // No task available - return ok with nil
+            Ok((rustler::types::atom::ok(), rustler::types::atom::nil()).encode(env))
+        }
+        Err(err) => {
+            // Worker error - return sanitized error
+            tracing::error!("Activity task polling error: {}", err);
+            let sanitized_error = sanitize_polling_error(&err);
+            Ok((rustler::types::atom::error(), sanitized_error).encode(env))
+        }
+    }
 }
 
 #[rustler::nif]
