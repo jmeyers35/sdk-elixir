@@ -89,14 +89,15 @@ defmodule ProtobufWorkflowExample do
 
   defp start_client do
     # Start with default config (localhost:7233)
-    config = %{
-      target_url: System.get_env("TEMPORAL_URL", "http://localhost:7233"),
+    config = [
+      host: System.get_env("TEMPORAL_HOST", "localhost:7233"),
       namespace: System.get_env("TEMPORAL_NAMESPACE", "default")
-    }
-    
-    IO.puts("\n🔌 Connecting to Temporal at #{config.target_url}")
-    
-    case Client.start_link(config: config) do
+    ]
+
+    host = Keyword.fetch!(config, :host)
+    IO.puts("\n🔌 Connecting to Temporal at #{host}")
+
+    case Client.start_link(config) do
       {:ok, pid} ->
         # Give the client a moment to establish connection
         Process.sleep(100)

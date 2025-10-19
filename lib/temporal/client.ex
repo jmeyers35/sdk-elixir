@@ -14,7 +14,7 @@ defmodule Temporal.Client do
 
       # Start a client (typically under a supervisor)
       {:ok, client} = Temporal.Client.start_link(
-        target_url: "localhost:7233",
+        host: "localhost:7233",
         namespace: "default"
       )
       
@@ -39,7 +39,8 @@ defmodule Temporal.Client do
 
   ## Options
 
-    * `:target_url` - The Temporal server URL (default: "localhost:7233")
+    * `:host` - The Temporal server host:port (default: "localhost:7233").
+      `:target_url` is accepted as a backward-compatible alias.
     * `:namespace` - The Temporal namespace to use (default: "default")
     * `:name` - Optional name for the GenServer process
     * `:tls` - Optional TLS configuration map
@@ -52,7 +53,7 @@ defmodule Temporal.Client do
       
       # With configuration
       {:ok, client} = Temporal.Client.start_link(
-        target_url: "temporal.example.com:7233",
+        host: "temporal.example.com:7233",
         namespace: "production",
         tls: %{
           client_cert_path: "/path/to/cert.pem",
@@ -405,8 +406,10 @@ defmodule Temporal.Client do
   end
 
   defp opts_to_cfg(opts) do
+    host_opt = Keyword.get(opts, :host) || Keyword.get(opts, :target_url)
+
     %Config{
-      host: to_string(Keyword.get(opts, :host, "localhost:7233")),
+      host: to_string(host_opt || "localhost:7233"),
       namespace: to_string(Keyword.get(opts, :namespace, "default")),
       task_queue: to_string(Keyword.get(opts, :task_queue, "default")),
       tls: Keyword.get(opts, :tls),

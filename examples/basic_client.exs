@@ -20,7 +20,7 @@ defmodule BasicClientExample do
     
     # Start the client
     {:ok, client} = Temporal.Client.start_link(
-      target_url: "localhost:7233",
+      host: "localhost:7233",
       namespace: "default"
     )
     

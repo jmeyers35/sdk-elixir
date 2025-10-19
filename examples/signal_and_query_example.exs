@@ -17,7 +17,7 @@ alias Temporal.Client
 
 # Configuration for connecting to Temporal
 config = [
-  target_url: "localhost:7233",
+  host: "localhost:7233",
   namespace: "default"
 ]
 

@@ -13,7 +13,7 @@ Code.prepend_path("_build/dev/lib/temporal/ebin")
 alias Temporal.Client
 
 config = [
-  target_url: "localhost:7233",
+  host: "localhost:7233",
   namespace: "default",
   payload_converter: [nil, :binary, :json],
   payload_converter_options: %{json_max_depth: 32, binary_max_size: 1024 * 1024}
