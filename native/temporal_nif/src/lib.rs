@@ -13,7 +13,7 @@ use client::{
     ClientOptions, ClientResource, ClientTlsConfig, WorkflowQueryParams, WorkflowSignalParams,
     WorkflowStartParams,
 };
-use worker::WorkerResource;
+use worker::{WorkerResource, WorkflowTaskCompletion, ActivityTaskCompletion};
 
 /// Global shared runtime for all Temporal operations
 /// This prevents resource exhaustion from creating multiple runtimes
@@ -974,22 +974,210 @@ fn worker_poll_activity_task<'a>(
     }
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyIo")]
 fn worker_complete_workflow_task<'a>(
     env: Env<'a>,
-    _worker: ResourceArc<WorkerResource>,
-    _completion: Term<'a>,
+    worker: ResourceArc<WorkerResource>,
+    completion_term: Term<'a>,
 ) -> NifResult<Term<'a>> {
-    Ok(rustler::types::atom::error().to_term(env))
+    // Parse completion data from Elixir term
+    let completion_map: HashMap<String, rustler::Term> = match completion_term.decode() {
+        Ok(map) => map,
+        Err(_) => {
+            let error_tuple = (rustler::types::atom::error(), "Completion must be a map");
+            return Ok(error_tuple.encode(env));
+        }
+    };
+
+    // Extract run_id (required)
+    let run_id = match completion_map.get("run_id") {
+        Some(term) => match term.decode::<String>() {
+            Ok(id) => id,
+            Err(_) => {
+                let error_tuple = (rustler::types::atom::error(), "run_id must be a string");
+                return Ok(error_tuple.encode(env));
+            }
+        },
+        None => {
+            let error_tuple = (rustler::types::atom::error(), "run_id is required");
+            return Ok(error_tuple.encode(env));
+        }
+    };
+
+    // Extract status type (success or failure)
+    let status = match completion_map.get("status") {
+        Some(term) => match term.decode::<String>() {
+            Ok(s) => s,
+            Err(_) => {
+                let error_tuple = (rustler::types::atom::error(), "status must be a string");
+                return Ok(error_tuple.encode(env));
+            }
+        },
+        None => "success".to_string(), // Default to success
+    };
+
+    // Build completion based on status
+    let completion = match status.as_str() {
+        "success" => {
+            // Extract commands as binary
+            let commands = match completion_map.get("commands") {
+                Some(term) => match term.decode::<Vec<u8>>() {
+                    Ok(cmds) => cmds,
+                    Err(_) => {
+                        let error_tuple = (rustler::types::atom::error(), "commands must be a binary");
+                        return Ok(error_tuple.encode(env));
+                    }
+                },
+                None => {
+                    let error_tuple = (rustler::types::atom::error(), "commands is required for success");
+                    return Ok(error_tuple.encode(env));
+                }
+            };
+            WorkerResource::WorkflowTaskCompletion::Success { run_id, commands }
+        }
+        "failure" => {
+            // Extract failure message
+            let failure = match completion_map.get("failure") {
+                Some(term) => match term.decode::<String>() {
+                    Ok(msg) => msg,
+                    Err(_) => {
+                        let error_tuple = (rustler::types::atom::error(), "failure must be a string");
+                        return Ok(error_tuple.encode(env));
+                    }
+                },
+                None => {
+                    let error_tuple = (rustler::types::atom::error(), "failure is required for failure status");
+                    return Ok(error_tuple.encode(env));
+                }
+            };
+            WorkerResource::WorkflowTaskCompletion::Failure { run_id, failure }
+        }
+        _ => {
+            let error_tuple = (rustler::types::atom::error(), "status must be 'success' or 'failure'");
+            return Ok(error_tuple.encode(env));
+        }
+    };
+
+    // Use shared runtime
+    let rt = get_runtime();
+
+    match rt.block_on(async { worker.complete_workflow_task(completion).await }) {
+        Ok(()) => Ok(rustler::types::atom::ok().encode(env)),
+        Err(err) => {
+            let error_tuple = (rustler::types::atom::error(), err);
+            Ok(error_tuple.encode(env))
+        }
+    }
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyIo")]
 fn worker_complete_activity_task<'a>(
     env: Env<'a>,
-    _worker: ResourceArc<WorkerResource>,
-    _completion: Term<'a>,
+    worker: ResourceArc<WorkerResource>,
+    completion_term: Term<'a>,
 ) -> NifResult<Term<'a>> {
-    Ok(rustler::types::atom::error().to_term(env))
+    // Parse completion data from Elixir term
+    let completion_map: HashMap<String, rustler::Term> = match completion_term.decode() {
+        Ok(map) => map,
+        Err(_) => {
+            let error_tuple = (rustler::types::atom::error(), "Completion must be a map");
+            return Ok(error_tuple.encode(env));
+        }
+    };
+
+    // Extract task_token (required)
+    let task_token = match completion_map.get("task_token") {
+        Some(term) => match term.decode::<Vec<u8>>() {
+            Ok(token) => token,
+            Err(_) => {
+                let error_tuple = (rustler::types::atom::error(), "task_token must be a binary");
+                return Ok(error_tuple.encode(env));
+            }
+        },
+        None => {
+            let error_tuple = (rustler::types::atom::error(), "task_token is required");
+            return Ok(error_tuple.encode(env));
+        }
+    };
+
+    // Extract status type (success, failure, or cancel)
+    let status = match completion_map.get("status") {
+        Some(term) => match term.decode::<String>() {
+            Ok(s) => s,
+            Err(_) => {
+                let error_tuple = (rustler::types::atom::error(), "status must be a string");
+                return Ok(error_tuple.encode(env));
+            }
+        },
+        None => "success".to_string(), // Default to success
+    };
+
+    // Build completion based on status
+    let completion = match status.as_str() {
+        "success" => {
+            // Extract result as binary
+            let result = match completion_map.get("result") {
+                Some(term) => match term.decode::<Vec<u8>>() {
+                    Ok(res) => res,
+                    Err(_) => {
+                        let error_tuple = (rustler::types::atom::error(), "result must be a binary");
+                        return Ok(error_tuple.encode(env));
+                    }
+                },
+                None => {
+                    let error_tuple = (rustler::types::atom::error(), "result is required for success");
+                    return Ok(error_tuple.encode(env));
+                }
+            };
+            WorkerResource::ActivityTaskCompletion::Success { task_token, result }
+        }
+        "failure" => {
+            // Extract failure message
+            let failure = match completion_map.get("failure") {
+                Some(term) => match term.decode::<String>() {
+                    Ok(msg) => msg,
+                    Err(_) => {
+                        let error_tuple = (rustler::types::atom::error(), "failure must be a string");
+                        return Ok(error_tuple.encode(env));
+                    }
+                },
+                None => {
+                    let error_tuple = (rustler::types::atom::error(), "failure is required for failure status");
+                    return Ok(error_tuple.encode(env));
+                }
+            };
+            WorkerResource::ActivityTaskCompletion::Failure { task_token, failure }
+        }
+        "cancel" => {
+            // Extract optional details
+            let details = match completion_map.get("details") {
+                Some(term) => match term.decode::<Vec<u8>>() {
+                    Ok(dets) => dets,
+                    Err(_) => {
+                        let error_tuple = (rustler::types::atom::error(), "details must be a binary");
+                        return Ok(error_tuple.encode(env));
+                    }
+                },
+                None => Vec::new(),
+            };
+            WorkerResource::ActivityTaskCompletion::Cancel { task_token, details }
+        }
+        _ => {
+            let error_tuple = (rustler::types::atom::error(), "status must be 'success', 'failure', or 'cancel'");
+            return Ok(error_tuple.encode(env));
+        }
+    };
+
+    // Use shared runtime
+    let rt = get_runtime();
+
+    match rt.block_on(async { worker.complete_activity_task(completion).await }) {
+        Ok(()) => Ok(rustler::types::atom::ok().encode(env)),
+        Err(err) => {
+            let error_tuple = (rustler::types::atom::error(), err);
+            Ok(error_tuple.encode(env))
+        }
+    }
 }
 
 #[cfg(test)]

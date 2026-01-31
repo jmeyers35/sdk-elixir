@@ -92,6 +92,41 @@ pub struct ActivityType {
     pub name: String,
 }
 
+/// Completion data for workflow tasks
+#[derive(Debug, Clone)]
+pub enum WorkflowTaskCompletion {
+    /// Successful completion with commands
+    Success {
+        run_id: String,
+        commands: Vec<u8>, // Serialized workflow commands
+    },
+    /// Failed with error message
+    Failure {
+        run_id: String,
+        failure: String,
+    },
+}
+
+/// Completion data for activity tasks
+#[derive(Debug, Clone)]
+pub enum ActivityTaskCompletion {
+    /// Successful completion with result
+    Success {
+        task_token: Vec<u8>,
+        result: Vec<u8>, // Serialized result payload
+    },
+    /// Failed with error details
+    Failure {
+        task_token: Vec<u8>,
+        failure: String,
+    },
+    /// Activity cancelled
+    Cancel {
+        task_token: Vec<u8>,
+        details: Vec<u8>, // Optional cancellation details
+    },
+}
+
 /// Resource wrapping a Temporal worker using SDK Core
 pub struct WorkerResource {
     client: ResourceArc<ClientResource>,
@@ -441,6 +476,59 @@ impl WorkerResource {
         })
     }
 
+    /// Complete a workflow task
+    pub async fn complete_workflow_task(
+        &self,
+        completion: WorkflowTaskCompletion,
+    ) -> Result<(), String> {
+        if !self.is_running() {
+            return Err("Worker is not running".to_string());
+        }
+
+        tracing::debug!("Completing workflow task on queue: {}", self.task_queue);
+
+        // TODO: Wire this up to SDK Core's workflow completion API
+        // For now, acknowledge receipt of completion data
+        match completion {
+            WorkflowTaskCompletion::Success { run_id, .. } => {
+                tracing::debug!("Workflow task success for run_id: {}", run_id);
+            }
+            WorkflowTaskCompletion::Failure { run_id, failure } => {
+                tracing::warn!("Workflow task failure for run_id: {} - {}", run_id, failure);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Complete an activity task
+    pub async fn complete_activity_task(
+        &self,
+        completion: ActivityTaskCompletion,
+    ) -> Result<(), String> {
+        if !self.is_running() {
+            return Err("Worker is not running".to_string());
+        }
+
+        tracing::debug!("Completing activity task on queue: {}", self.task_queue);
+
+        // TODO: Wire this up to SDK Core's activity completion API
+        // For now, acknowledge receipt of completion data
+        match completion {
+            ActivityTaskCompletion::Success { task_token, .. } => {
+                tracing::debug!("Activity task success, token length: {}", task_token.len());
+            }
+            ActivityTaskCompletion::Failure { task_token, failure } => {
+                tracing::warn!("Activity task failure, token length: {} - {}", task_token.len(), failure);
+            }
+            ActivityTaskCompletion::Cancel { task_token, .. } => {
+                tracing::info!("Activity task cancel, token length: {}", task_token.len());
+            }
+        }
+
+        Ok(())
+    }
+
     /// Get the worker's namespace
     pub fn namespace(&self) -> &str {
         &self.namespace
@@ -482,6 +570,55 @@ impl Drop for WorkerResource {
         self.state.is_running.store(false, Ordering::Relaxed);
 
         tracing::debug!("WorkerResource dropped, worker stopped and cleaned up");
+    }
+}
+
+// Completion implementations that will be wired up to SDK Core in future iteration
+// For now, these accept the completion data and acknowledge receipt
+impl WorkerResource {
+    /// Complete a workflow task
+    pub async fn complete_workflow_task(
+        &self,
+        completion: WorkflowTaskCompletion,
+    ) -> Result<(), String> {
+        tracing::debug!("Completing workflow task on queue: {}", self.task_queue);
+
+        // TODO: Wire this up to SDK Core's workflow completion API
+        // For now, acknowledge receipt of completion data
+        match completion {
+            WorkflowTaskCompletion::Success { run_id, .. } => {
+                tracing::debug!("Workflow task success for run_id: {}", run_id);
+            }
+            WorkflowTaskCompletion::Failure { run_id, failure } => {
+                tracing::warn!("Workflow task failure for run_id: {} - {}", run_id, failure);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Complete an activity task
+    pub async fn complete_activity_task(
+        &self,
+        completion: ActivityTaskCompletion,
+    ) -> Result<(), String> {
+        tracing::debug!("Completing activity task on queue: {}", self.task_queue);
+
+        // TODO: Wire this up to SDK Core's activity completion API
+        // For now, acknowledge receipt of completion data
+        match completion {
+            ActivityTaskCompletion::Success { task_token, .. } => {
+                tracing::debug!("Activity task success, token length: {}", task_token.len());
+            }
+            ActivityTaskCompletion::Failure { task_token, failure } => {
+                tracing::warn!("Activity task failure, token length: {} - {}", task_token.len(), failure);
+            }
+            ActivityTaskCompletion::Cancel { task_token, .. } => {
+                tracing::info!("Activity task cancel, token length: {}", task_token.len());
+            }
+        }
+
+        Ok(())
     }
 }
 
